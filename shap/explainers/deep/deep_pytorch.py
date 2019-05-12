@@ -7,7 +7,7 @@ torch = None
 
 class PyTorchDeepExplainer(Explainer):
 
-    def __init__(self, model, data):
+    def __init__(self, model, data, feedforward_args=None):
         # try and import pytorch
         global torch
         if torch is None:
@@ -21,6 +21,10 @@ class PyTorchDeepExplainer(Explainer):
             self.multi_input = True
         if type(data) != list:
             data = [data]
+        # Confirm that the arguments for the feedforward method are in a list
+        if feedforward_args != None:
+            if type(feedforward_args) != list:
+                feedforward_args = [feedforward_args]
         self.data = data
         self.layer = None
         self.input_handle = None
@@ -37,7 +41,10 @@ class PyTorchDeepExplainer(Explainer):
             # if we are taking an interim layer, the 'data' is going to be the input
             # of the interim layer; we will capture this using a forward hook
             with torch.no_grad():
-                _ = model(*data)
+                if feedforward_args != None:
+                    _ = model(*data, *feedforward_args)
+                else:
+                    _ = model(*data)
                 interim_inputs = self.layer.target_input
                 if type(interim_inputs) is tuple:
                     # this should always be true, but just to be safe
@@ -51,7 +58,10 @@ class PyTorchDeepExplainer(Explainer):
         self.multi_output = False
         self.num_outputs = 1
         with torch.no_grad():
-            outputs = model(*data)
+            if feedforward_args != None:
+                outputs = model(*data, *feedforward_args)
+            else:
+                outputs = model(*data)
             if outputs.shape[1] > 1:
                 self.multi_output = True
                 self.num_outputs = outputs.shape[1]
@@ -93,10 +103,13 @@ class PyTorchDeepExplainer(Explainer):
                 except AttributeError:
                     pass
 
-    def gradient(self, idx, inputs):
+    def gradient(self, idx, inputs, feedforward_args=None):
         self.model.zero_grad()
         X = [x.requires_grad_() for x in inputs]
-        outputs = self.model(*X)
+        if feedforward_args != None:
+            outputs = self.model(*X, *feedforward_args)
+        else:
+            outputs = self.model(*X)
         selected = [val for val in outputs[:, idx]]
         if self.interim:
             interim_inputs = self.layer.target_input
@@ -107,7 +120,7 @@ class PyTorchDeepExplainer(Explainer):
             grads = [torch.autograd.grad(selected, x)[0].cpu().numpy() for x in X]
             return grads
 
-    def shap_values(self, X, ranked_outputs=None, output_rank_order="max"):
+    def shap_values(self, X, ranked_outputs=None, output_rank_order="max", feedforward_args=None, var_seq_len=False):
 
         # X ~ self.model_input
         # X_data ~ self.data
@@ -121,7 +134,10 @@ class PyTorchDeepExplainer(Explainer):
 
         if ranked_outputs is not None and self.multi_output:
             with torch.no_grad():
-                model_output_values = self.model(*X)
+                if feedforward_args != None:
+                    model_output_values = model(*X, *feedforward_args)
+                else:
+                    model_output_values = model(*X)
             # rank and determine the model outputs that we will explain
             if output_rank_order == "max":
                 _, model_output_ranks = torch.sort(model_output_values, descending=True)
@@ -141,6 +157,12 @@ class PyTorchDeepExplainer(Explainer):
         if self.interim:
             self.add_target_handle(self.layer)
 
+        # check if the input data has variable sequence length
+        if var_seq_len:
+            # get the original sequence lengths of the background and test data
+            x_lengths_background = feedforward_args[0]
+            x_lengths_test = feedforward_args[1]
+
         # compute the attributions
         output_phis = []
         for i in range(model_output_ranks.shape[1]):
@@ -159,7 +181,27 @@ class PyTorchDeepExplainer(Explainer):
                 joint_x = [torch.cat((tiled_X[l], self.data[l]), dim=0) for l in range(len(X))]
                 # run attribution computation graph
                 feature_ind = model_output_ranks[j, i]
-                sample_phis = self.gradient(feature_ind, joint_x)
+                if var_seq_len:
+                    # tile the sequence lengths in case of input data with variable sequence length
+                    tiled_x_lengths_test = [[x_lengths_test[j] for i in range(0, self.data[l].shape[0])] for l
+                                             in range(len(X))]
+                    if len(X) == 1:
+                        tiled_x_lengths_test = tiled_x_lengths_test[0]
+                    joint_x_lengths = tiled_x_lengths_test + x_lengths_background
+
+                    # sort the indeces to get the data sorted by sequence length
+                    data_sorted_idx = [list(np.argsort(joint_x_lengths)[::-1]) for l in range(len(X))]
+                    # sort the x_lengths array by descending sequence length
+                    joint_x_lengths = [[joint_x_lengths[idx] for idx in data_sorted_idx[l]] for l in range(len(X))]
+                    # sort the features by descending sequence length
+                    joint_x = [joint_x[l][data_sorted_idx[l], :, :] for l in range(len(X))]
+
+                    # adjust the feedforward arguments to incorporate the tiled sequence lengths
+                    if len(feedforward_args) >= 3:
+                        feedforward_args = [joint_x_lengths[0] + feedforward_args[2:]]
+                    else:
+                        feedforward_args = joint_x_lengths
+                sample_phis = self.gradient(feature_ind, joint_x, feedforward_args)
                 # assign the attributions to the right part of the output arrays
                 if self.interim:
                     sample_phis, output = sample_phis

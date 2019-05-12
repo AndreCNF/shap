@@ -15,7 +15,7 @@ class DeepExplainer(Explainer):
     current model output (f(x) - E[f(x)]).
     """
 
-    def __init__(self, model, data, session=None, learning_phase_flags=None):
+    def __init__(self, model, data, session=None, learning_phase_flags=None, feedforward_args=None):
         """ An explainer object for a differentiable model using a given background dataset.
 
         Note that the complexity of the method scales linearly with the number of background data
@@ -60,30 +60,39 @@ class DeepExplainer(Explainer):
             batch norm or dropout. If None is passed then we look for tensors in the graph that look like
             learning phase flags (this works for Keras models). Note that we assume all the flags should
             have a value of False during predictions (and hence explanations).
+
+        if framework == 'pytorch':
+
+        feedforward_args : None or list
+            In case your model's feedforward method has additional parameters besides the input data,
+            you can specify them in a list format in feedforward_args. This can be useful for instance
+            if you're dealing with recurrent neural networks that receive inputs with variable sequence
+            length, requiring padding and the list of original sequence lengths. Currently only works
+            in PyTorch.
         """
         # first, we need to find the framework
         if type(model) is tuple:
             a, b = model
             try:
                 a.named_parameters()
-                framework = 'pytorch'
+                self.framework = 'pytorch'
             except:
-                framework = 'tensorflow'
+                self.framework = 'tensorflow'
         else:
             try:
                 model.named_parameters()
-                framework = 'pytorch'
+                self.framework = 'pytorch'
             except:
-                framework = 'tensorflow'
+                self.framework = 'tensorflow'
 
-        if framework == 'tensorflow':
+        if self.framework == 'tensorflow':
             self.explainer = TFDeepExplainer(model, data, session, learning_phase_flags)
-        elif framework == 'pytorch':
-            self.explainer = PyTorchDeepExplainer(model, data)
+        elif self.framework == 'pytorch':
+            self.explainer = PyTorchDeepExplainer(model, data, feedforward_args)
 
         self.expected_value = self.explainer.expected_value
 
-    def shap_values(self, X, ranked_outputs=None, output_rank_order='max'):
+    def shap_values(self, X, ranked_outputs=None, output_rank_order='max', feedforward_args=None, var_seq_len=False):
         """ Return approximate SHAP values for the model applied to the data given by X.
 
         Parameters
@@ -106,6 +115,23 @@ class DeepExplainer(Explainer):
             How to order the model outputs when using ranked_outputs, either by maximum, minimum, or
             maximum absolute value.
 
+        if framework == 'pytorch':
+
+        feedforward_args : None or list
+            In case your model's feedforward method has additional parameters besides the input data,
+            you can specify them in a list format in feedforward_args. This can be useful for instance
+            if you're dealing with recurrent neural networks that receive inputs with variable sequence
+            length, requiring padding and the list of original sequence lengths. Currently only works
+            in PyTorch.
+
+        var_seq_len : bool
+            Indicates whether the input data has variable sequence length or not. If true, the lists of
+            the original sequence lengths for the background data (used in the explainer) and of the
+            test data (corresponding to X) must be provided as the first two items of feedforward_args.
+            Currently only works in PyTorch.
+            Usage example:
+            explainer.shap_values(X, feedforward_args=[x_lenghts_background, x_lenghts_test], var_seq_len=True)
+
         Returns
         -------
         For a models with a single output this returns a tensor of SHAP values with the same shape
@@ -116,4 +142,7 @@ class DeepExplainer(Explainer):
         ranked_outputs, and indexes is a matrix that indicates for each sample which output indexes
         were chosen as "top".
         """
-        return self.explainer.shap_values(X, ranked_outputs, output_rank_order)
+        if self.framework == 'tensorflow':
+            return self.explainer.shap_values(X, ranked_outputs, output_rank_order)
+        elif self.framework == 'pytorch':
+            return self.explainer.shap_values(X, ranked_outputs, output_rank_order, feedforward_args, var_seq_len)
