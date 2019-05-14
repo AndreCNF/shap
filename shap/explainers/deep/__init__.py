@@ -92,7 +92,7 @@ class DeepExplainer(Explainer):
 
         self.expected_value = self.explainer.expected_value
 
-    def shap_values(self, X, ranked_outputs=None, output_rank_order='max', feedforward_args=None, var_seq_len=False):
+    def shap_values(self, X, ranked_outputs=None, output_rank_order='max', feedforward_args=None, var_seq_len=False, see_progress=False):
         """ Return approximate SHAP values for the model applied to the data given by X.
 
         Parameters
@@ -132,6 +132,10 @@ class DeepExplainer(Explainer):
             Usage example:
             explainer.shap_values(X, feedforward_args=[x_lenghts_background, x_lenghts_test], var_seq_len=True)
 
+        see_progress : bool, default False
+            If set to True, a progress bar will show up indicating the execution
+            of the SHAP values calculations.
+
         Returns
         -------
         For a models with a single output this returns a tensor of SHAP values with the same shape
@@ -145,4 +149,4 @@ class DeepExplainer(Explainer):
         if self.framework == 'tensorflow':
             return self.explainer.shap_values(X, ranked_outputs, output_rank_order)
         elif self.framework == 'pytorch':
-            return self.explainer.shap_values(X, ranked_outputs, output_rank_order, feedforward_args, var_seq_len)
+            return self.explainer.shap_values(X, ranked_outputs, output_rank_order, feedforward_args, var_seq_len, see_progress)

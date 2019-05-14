@@ -3,6 +3,24 @@ import warnings
 from shap.explainers.explainer import Explainer
 from distutils.version import LooseVersion
 torch = None
+from tqdm import tqdm
+from tqdm import tqdm_notebook
+
+def in_ipynb():
+    '''Detect if code is running in a IPython notebook, such as in Jupyter Lab.'''
+    return str(type(get_ipython())) == "<class 'ipykernel.zmqshell.ZMQInteractiveShell'>"
+
+def iterations_loop(x, see_progress=True):
+    '''Determine if a progress bar is shown or not.'''
+    if see_progress:
+        # Define the method to use as a progress bar, depending on whether code
+        # is running on a notebook or terminal
+        if in_ipynb():
+            return tqdm_notebook(x)
+        else:
+            return tqdm(x)
+    else:
+        return x
 
 
 class PyTorchDeepExplainer(Explainer):
@@ -120,7 +138,7 @@ class PyTorchDeepExplainer(Explainer):
             grads = [torch.autograd.grad(selected, x)[0].cpu().numpy() for x in X]
             return grads
 
-    def shap_values(self, X, ranked_outputs=None, output_rank_order="max", feedforward_args=None, var_seq_len=False):
+    def shap_values(self, X, ranked_outputs=None, output_rank_order="max", feedforward_args=None, var_seq_len=False, see_progress=False):
 
         # X ~ self.model_input
         # X_data ~ self.data
@@ -165,7 +183,7 @@ class PyTorchDeepExplainer(Explainer):
 
         # compute the attributions
         output_phis = []
-        for i in range(model_output_ranks.shape[1]):
+        for i in iterations_loop(range(model_output_ranks.shape[1]), see_progress=see_progress):
             phis = []
             if self.interim:
                 for k in range(len(self.interim_inputs_shape)):
@@ -173,7 +191,7 @@ class PyTorchDeepExplainer(Explainer):
             else:
                 for k in range(len(X)):
                     phis.append(np.zeros(X[k].shape))
-            for j in range(X[0].shape[0]):
+            for j in iterations_loop(range(X[0].shape[0]), see_progress=see_progress):
                 # tile the inputs to line up with the background data samples
                 tiled_X = [X[l][j:j + 1].repeat(
                                    (self.data[l].shape[0],) + tuple([1 for k in range(len(X[l].shape) - 1)])) for l
