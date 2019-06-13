@@ -83,7 +83,7 @@ class PyTorchDeepExplainer(Explainer):
             if outputs.shape[1] > 1:
                 self.multi_output = True
                 self.num_outputs = outputs.shape[1]
-            self.expected_value = outputs.mean(0).numpy()
+            self.expected_value = outputs.mean(0).cpu().numpy()
 
     def add_target_handle(self, layer):
         input_handle = layer.register_forward_hook(get_target_input)
@@ -232,7 +232,7 @@ class PyTorchDeepExplainer(Explainer):
                         phis[l][j] = (sample_phis[l][self.data[l].shape[0]:]* (x[l] - data[l])).mean(0)
                 else:
                     for l in range(len(X)):
-                        phis[l][j] = (torch.from_numpy(sample_phis[l][self.data[l].shape[0]:]) * (X[l][j: j + 1] - self.data[l])).mean(0)
+                        phis[l][j] = (torch.from_numpy(sample_phis[l][self.data[l].shape[0]:]).to(X[l].device) * (X[l][j: j + 1] - self.data[l])).cpu().numpy().mean(0)
             output_phis.append(phis[0] if not self.multi_input else phis)
         # cleanup; remove all gradient handles
         for handle in handles:
@@ -411,10 +411,16 @@ op_handler['AlphaDropout'] = passthrough
 op_handler['Conv1d'] = linear_1d
 op_handler['Conv2d'] = linear_1d
 op_handler['Conv3d'] = linear_1d
+op_handler['ConvTranspose1d'] = linear_1d
+op_handler['ConvTranspose2d'] = linear_1d
+op_handler['ConvTranspose3d'] = linear_1d
 op_handler['Linear'] = linear_1d
 op_handler['AvgPool1d'] = linear_1d
 op_handler['AvgPool2d'] = linear_1d
 op_handler['AvgPool3d'] = linear_1d
+op_handler['AdaptiveAvgPool1d'] = linear_1d
+op_handler['AdaptiveAvgPool2d'] = linear_1d
+op_handler['AdaptiveAvgPool3d'] = linear_1d
 op_handler['BatchNorm1d'] = linear_1d
 op_handler['BatchNorm2d'] = linear_1d
 op_handler['BatchNorm3d'] = linear_1d
