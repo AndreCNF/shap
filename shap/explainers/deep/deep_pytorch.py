@@ -8,7 +8,11 @@ from tqdm import tqdm_notebook
 
 def in_ipynb():
     '''Detect if code is running in a IPython notebook, such as in Jupyter Lab.'''
-    return str(type(get_ipython())) == "<class 'ipykernel.zmqshell.ZMQInteractiveShell'>"
+    try:
+        return str(type(get_ipython())) == "<class 'ipykernel.zmqshell.ZMQInteractiveShell'>"
+    except:
+        # Not on IPython if get_ipython fails
+        return False
 
 def iterations_loop(x, see_progress=True):
     '''Determine if a progress bar is shown or not.'''
@@ -232,6 +236,7 @@ class PyTorchDeepExplainer(Explainer):
                         phis[l][j] = (sample_phis[l][self.data[l].shape[0]:]* (x[l] - data[l])).mean(0)
                 else:
                     for l in range(len(X)):
+                        # [TODO] This might be the line that's messing up my SHAP values (it counts in the padding values in the right side of the multiplication)
                         phis[l][j] = (torch.from_numpy(sample_phis[l][self.data[l].shape[0]:]).to(X[l].device) * (X[l][j: j + 1] - self.data[l])).cpu().numpy().mean(0)
             output_phis.append(phis[0] if not self.multi_input else phis)
         # cleanup; remove all gradient handles
