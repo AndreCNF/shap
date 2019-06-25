@@ -24,6 +24,7 @@ def iterations_loop(x, see_progress=True):
         else:
             return tqdm(x)
     else:
+        # Don't show any progress bar if see_progress is False
         return x
 
 
