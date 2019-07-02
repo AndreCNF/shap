@@ -38,6 +38,8 @@ class InstanceWithIndex(Instance):
         self.column_name = column_name
 
     def convert_to_df(self):
+        if type(self.index_value) is not list:
+            self.index_value = [self.index_value]
         index = pd.DataFrame(self.index_value, columns=[self.index_name])
         data = pd.DataFrame(self.x, columns=self.column_name)
         df = pd.concat([index, data], axis=1)
@@ -74,7 +76,7 @@ def convert_to_model(val):
 
 def match_model_to_data(model, data):
     assert isinstance(model, Model), "model must be of type Model!"
-    
+
     try:
         if isinstance(data, DenseDataWithIndex):
             out_val = model.f(data.convert_to_df())
@@ -89,7 +91,7 @@ def match_model_to_data(model, data):
             model.out_names = ["output value"]
         else:
             model.out_names = ["output value "+str(i) for i in range(out_val.shape[0])]
-    
+
     return out_val
 
 
@@ -215,17 +217,17 @@ def convert_to_link(val):
 def hclust_ordering(X, metric="sqeuclidean"):
     """ A leaf ordering is under-defined, this picks the ordering that keeps nearby samples similar.
     """
-    
+
     # compute a hierarchical clustering
     D = sp.spatial.distance.pdist(X, metric)
     cluster_matrix = sp.cluster.hierarchy.complete(D)
-    
+
     # merge clusters, rotating them to make the end points match as best we can
     sets = [[i] for i in range(X.shape[0])]
     for i in range(cluster_matrix.shape[0]):
         s1 = sets[int(cluster_matrix[i,0])]
         s2 = sets[int(cluster_matrix[i,1])]
-        
+
         # compute distances between the end points of the lists
         d_s1_s2 = pdist(np.vstack([X[s1[-1],:], X[s2[0],:]]), metric)[0]
         d_s2_s1 = pdist(np.vstack([X[s1[0],:], X[s2[-1],:]]), metric)[0]
@@ -243,7 +245,7 @@ def hclust_ordering(X, metric="sqeuclidean"):
             sets.append(list(reversed(s1)) + s2)
         else:
             sets.append(s1 + list(reversed(s2)))
-    
+
     return sets[-1]
 
 
@@ -257,7 +259,7 @@ def convert_name(ind, shap_values, feature_names):
 
             # we allow the sum of all the SHAP values to be specified with "sum()"
             # assuming here that the calling method can deal with this case
-            elif ind == "sum()": 
+            elif ind == "sum()":
                 return "sum()"
             else:
                 print("Could not find feature named: " + ind)

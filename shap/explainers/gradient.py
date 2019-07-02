@@ -5,7 +5,29 @@ from distutils.version import LooseVersion
 keras = None
 tf = None
 torch = None
+from tqdm import tqdm
+from tqdm import tqdm_notebook
 
+def in_ipynb():
+    '''Detect if code is running in a IPython notebook, such as in Jupyter Lab.'''
+    try:
+        return str(type(get_ipython())) == "<class 'ipykernel.zmqshell.ZMQInteractiveShell'>"
+    except:
+        # Not on IPython if get_ipython fails
+        return False
+
+def iterations_loop(x, see_progress=True):
+    '''Determine if a progress bar is shown or not.'''
+    if see_progress:
+        # Define the method to use as a progress bar, depending on whether code
+        # is running on a notebook or terminal
+        if in_ipynb():
+            return tqdm_notebook(x)
+        else:
+            return tqdm(x)
+    else:
+        # Don't show any progress bar if see_progress is False
+        return x
 
 class GradientExplainer(Explainer):
     """ Explains a model using expected gradients (an extension of integrated gradients).
@@ -20,7 +42,7 @@ class GradientExplainer(Explainer):
     difference between the expected model output and the current output.
     """
 
-    def __init__(self, model, data, session=None, batch_size=50, local_smoothing=0):
+    def __init__(self, model, data, session=None, batch_size=50, local_smoothing=0, feedforward_args=None):
         """ An explainer object for a differentiable model using a given background dataset.
 
         Note that the complexity of the method scales linearly with the number of background data
@@ -49,6 +71,15 @@ class GradientExplainer(Explainer):
             The background dataset to use for integrating out features. GradientExplainer integrates
             over these samples. The data passed here must match the input tensors given in the
             first argument.
+
+        if framework == 'pytorch':
+
+        feedforward_args : None or list
+            In case your model's feedforward method has additional parameters besides the input data,
+            you can specify them in a list format in feedforward_args. This can be useful for instance
+            if you're dealing with recurrent neural networks that receive inputs with variable sequence
+            length, requiring padding and the list of original sequence lengths. Currently only works
+            in PyTorch.
         """
 
         # first, we need to find the framework
@@ -70,9 +101,10 @@ class GradientExplainer(Explainer):
         if framework == 'tensorflow':
             self.explainer = _TFGradientExplainer(model, data, session, batch_size, local_smoothing)
         elif framework == 'pytorch':
-            self.explainer = _PyTorchGradientExplainer(model, data, batch_size, local_smoothing)
+            self.explainer = _PyTorchGradientExplainer(model, data, batch_size, local_smoothing, feedforward_args)
 
-    def shap_values(self, X, nsamples=200, ranked_outputs=None, output_rank_order="max", rseed=None):
+    def shap_values(self, X, nsamples=200, ranked_outputs=None, output_rank_order="max", rseed=None,
+                    feedforward_args=None, var_seq_len=False, see_progress=False):
         """ Return the values for the model applied to X.
 
         Parameters
@@ -96,8 +128,29 @@ class GradientExplainer(Explainer):
             maximum absolute value. If "custom" Then "ranked_outputs" contains a list of output nodes.
 
         rseed : None or int
-            Seeding the randomness in shap value computation  (background example choice, 
+            Seeding the randomness in shap value computation  (background example choice,
             interpolation between current and background example, smoothing).
+
+        if framework == 'pytorch':
+
+        feedforward_args : None or list, default None
+            In case your model's feedforward method has additional parameters besides the input data,
+            you can specify them in a list format in feedforward_args. This can be useful for instance
+            if you're dealing with recurrent neural networks that receive inputs with variable sequence
+            length, requiring padding and the list of original sequence lengths. Currently only works
+            in PyTorch.
+
+        var_seq_len : bool, default False
+            Indicates whether the input data has variable sequence length or not. If true, the list of
+            the original sequence length for the input data (used in the explainer) and of the input
+            data (corresponding to X) must be provided as the first item of feedforward_args.
+            Currently only works in PyTorch.
+            Usage example:
+            explainer.shap_values(X, feedforward_args=[x_lengths], var_seq_len=True)
+
+        see_progress : bool, default False
+            If set to True, a progress bar will show up indicating the execution
+            of the SHAP values calculations.
 
         Returns
         -------
@@ -109,7 +162,8 @@ class GradientExplainer(Explainer):
         ranked_outputs, and indexes is a matrix that tells for each sample which output indexes
         were chosen as "top".
         """
-        return self.explainer.shap_values(X, nsamples, ranked_outputs, output_rank_order, rseed)
+        return self.explainer.shap_values(X, nsamples, ranked_outputs, output_rank_order, rseed,
+                                          feedforward_args, var_seq_len, see_progress)
 
 
 class _TFGradientExplainer(Explainer):
@@ -308,7 +362,7 @@ class _TFGradientExplainer(Explainer):
 
 class _PyTorchGradientExplainer(Explainer):
 
-    def __init__(self, model, data, batch_size=50, local_smoothing=0):
+    def __init__(self, model, data, batch_size=50, local_smoothing=0, feedforward_args=None):
 
         # try and import pytorch
         global torch
@@ -323,6 +377,10 @@ class _PyTorchGradientExplainer(Explainer):
             self.multi_input = True
         if type(data) != list:
             data = [data]
+        # Confirm that the arguments for the feedforward method are in a list
+        if feedforward_args != None:
+            if type(feedforward_args) != list:
+                feedforward_args = [feedforward_args]
 
         # for consistency, the method signature calls for data as the model input.
         # However, within this class, self.model_inputs is the input (i.e. the data passed by the user)
@@ -345,7 +403,10 @@ class _PyTorchGradientExplainer(Explainer):
             # now, if we are taking an interim layer, the 'data' is going to be the input
             # of the interim layer; we will capture this using a forward hook
             with torch.no_grad():
-                _ = model(*data)
+                if feedforward_args != None:
+                    _ = model(*data, *feedforward_args)
+                else:
+                    _ = model(*data)
                 interim_inputs = self.layer.target_input
                 if type(interim_inputs) is tuple:
                     # this should always be true, but just to be safe
@@ -357,7 +418,10 @@ class _PyTorchGradientExplainer(Explainer):
         self.model = model.eval()
 
         multi_output = False
-        outputs = self.model(*self.model_inputs)
+        if feedforward_args != None:
+            outputs = self.model(*self.model_inputs, *feedforward_args)
+        else:
+            outputs = self.model(*self.model_inputs)
         if outputs.shape[1] > 1:
             multi_output = True
         self.multi_output = multi_output
@@ -367,10 +431,13 @@ class _PyTorchGradientExplainer(Explainer):
         else:
             self.gradients = [None for i in range(outputs.shape[1])]
 
-    def gradient(self, idx, inputs):
+    def gradient(self, idx, inputs, feedforward_args=None):
         self.model.zero_grad()
         X = [x.requires_grad_() for x in inputs]
-        outputs = self.model(*X)
+        if feedforward_args != None:
+            outputs = self.model(*X, *feedforward_args)
+        else:
+            outputs = self.model(*X)
         selected = [val for val in outputs[:, idx]]
         if self.input_handle is not None:
             interim_inputs = self.layer.target_input
@@ -392,7 +459,8 @@ class _PyTorchGradientExplainer(Explainer):
         input_handle = layer.register_forward_hook(self.get_interim_input)
         self.input_handle = input_handle
 
-    def shap_values(self, X, nsamples=200, ranked_outputs=None, output_rank_order="max", rseed=None):
+    def shap_values(self, X, nsamples=200, ranked_outputs=None, output_rank_order="max", rseed=None,
+                    feedforward_args=None, var_seq_len=False, see_progress=False):
 
         # X ~ self.model_input
         # X_data ~ self.data
@@ -406,7 +474,10 @@ class _PyTorchGradientExplainer(Explainer):
 
         if ranked_outputs is not None and self.multi_output:
             with torch.no_grad():
-                model_output_values = self.model(*X)
+                if feedforward_args != None:
+                    model_output_values = self.model(*X, *feedforward_args)
+                else:
+                    model_output_values = self.model(*X)
             # rank and determine the model outputs that we will explain
             if output_rank_order == "max":
                 _, model_output_ranks = torch.sort(model_output_values, descending=True)
@@ -434,6 +505,11 @@ class _PyTorchGradientExplainer(Explainer):
         # samples_delta = (x - x') for the input being explained - may be an interim input
         samples_input = [torch.zeros((nsamples,) + X[l].shape[1:], device=X[l].device) for l in range(len(X))]
         samples_delta = [np.zeros((nsamples, ) + self.data[l].shape[1:]) for l in range(len(self.data))]
+
+        # check if the input data has variable sequence length
+        if var_seq_len:
+            # get the original sequence lengths of the input data
+            x_lengths = [x_length for x_length in feedforward_args[0] for n in range(nsamples)]
 
         # use random seed if no argument given
         if rseed is None:
@@ -466,7 +542,17 @@ class _PyTorchGradientExplainer(Explainer):
 
                     if self.interim is True:
                         with torch.no_grad():
-                            _ = self.model(*[samples_input[l][k].unsqueeze(0) for l in range(len(X))])
+                            if feedforward_args != None:
+                                if var_seq_len:
+                                    # Use the current sample's original sequence length
+                                    if len(feedforward_args) > 1:
+                                        _ = self.model(*[samples_input[l][k].unsqueeze(0) for l in range(len(X))], [x_lengths[j]], *feedforward_args[1:])
+                                    else:
+                                        _ = self.model(*[samples_input[l][k].unsqueeze(0) for l in range(len(X))], [x_lengths[j]])
+                                else:
+                                    _ = self.model(*[samples_input[l][k].unsqueeze(0) for l in range(len(X))], *feedforward_args)
+                            else:
+                                _ = self.model(*[samples_input[l][k].unsqueeze(0) for l in range(len(X))])
                             interim_inputs = self.layer.target_input
                             del self.layer.target_input
                             if type(interim_inputs) is tuple:
@@ -480,9 +566,17 @@ class _PyTorchGradientExplainer(Explainer):
                 # compute the gradients at all the sample points
                 find = model_output_ranks[j, i]
                 grads = []
-                for b in range(0, nsamples, self.batch_size):
+                for b in iterations_loop(range(0, nsamples, self.batch_size), see_progress=see_progress):
                     batch = [samples_input[l][b:min(b+self.batch_size,nsamples)].clone().detach() for l in range(len(X))]
-                    grads.append(self.gradient(find, batch))
+                    if feedforward_args != None:
+                        if var_seq_len:
+                            # Use the current sample's original sequence length
+                            if len(feedforward_args) > 1:
+                                grads.append(self.gradient(find, batch, *[x_lengths[b:min(b+self.batch_size,nsamples)], *feedforward_args[1:]]))
+                            else:
+                                grads.append(self.gradient(find, batch, [x_lengths[b:min(b+self.batch_size,nsamples)]]))
+                        else:
+                            grads.append(self.gradient(find, batch, *feedforward_args))
                 grad = [np.concatenate([g[l] for g in grads], 0) for l in range(len(self.data))]
                 # assign the attributions to the right part of the output arrays
                 for l in range(len(self.data)):

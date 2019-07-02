@@ -11,6 +11,7 @@ from sklearn.linear_model import LassoLarsIC, Lasso, lars_path
 from sklearn.cluster import KMeans
 from tqdm.autonotebook import tqdm
 from .explainer import Explainer
+import torch
 
 log = logging.getLogger('shap')
 
@@ -76,7 +77,7 @@ class KernelExplainer(Explainer):
         this background dataset can be the whole training set, but for larger problems consider
         using a single reference value or using the kmeans function to summarize the dataset.
         Note: for sparse case we accept any sparse matrix but convert to lil format for
-        performance. 
+        performance.
 
     link : "identity" or "logit"
         A generalized linear model link to connect the feature importance values to the model
@@ -91,9 +92,15 @@ class KernelExplainer(Explainer):
         # convert incoming inputs to standardized iml objects
         self.link = convert_to_link(link)
         self.model = convert_to_model(model)
-        self.keep_index = kwargs.get("keep_index", False)
-        self.keep_index_ordered = kwargs.get("keep_index_ordered", False)
-        self.data = convert_to_data(data, keep_index=self.keep_index)
+        self.keep_index = kwargs['kwargs'].get("keep_index", False)
+        self.keep_index_ordered = kwargs['kwargs'].get("keep_index_ordered", False)
+        # remove unwanted features (id, ts and label)
+        # [TODO] Remove unwanted features in a more generic way. I'm assuming that we need to remove the first two (id and ts) and the last one (label)
+        self.data = convert_to_data(data[:, 2:-1], keep_index=self.keep_index)
+        self.col_names = None
+        if str(type(data)).endswith("'pandas.core.frame.DataFrame'>"):
+            # keep the column names so that data can be used in dataframe format
+            self.col_names = data.columns
         model_null = match_model_to_data(self.model, self.data)
 
         # enforce our current input type limitations
@@ -169,17 +176,94 @@ class KernelExplainer(Explainer):
                 index_name = X.index.name
                 column_name = list(X.columns)
             X = X.values
-        
+
         x_type = str(type(X))
         arr_type = "'numpy.ndarray'>"
         # if sparse, convert to lil for performance
         if sp.sparse.issparse(X) and not sp.sparse.isspmatrix_lil(X):
             X = X.tolil()
         assert x_type.endswith(arr_type) or sp.sparse.isspmatrix_lil(X), "Unknown instance type: " + x_type
-        assert len(X.shape) == 1 or len(X.shape) == 2, "Instance must have 1 or 2 dimensions!"
+        assert len(X.shape) == 1 or len(X.shape) == 2 or len(X.shape) == 3, "Instance must have 1, 2 or 3 dimensions!"
+
+        # check if the model is a recurrent neural network
+        self.isRNN = kwargs['kwargs'].get('isRNN', True)
+
+        if self.isRNN:
+            # check if the recurrent layer is specified
+            recur_layer = kwargs['kwargs'].get('recur_layer', None)
+            if recur_layer is None:
+                # get the model object, so as to use its recurrent layer
+                model_obj = kwargs['kwargs'].get('model_obj', None)
+                assert model_obj is not None, 'If the model uses a recurrent neural network, either the recurrent layer or the full model object must be specified.'
+                # search for a recurrent layer
+                if hasattr(model_obj, 'lstm'):
+                    recur_layer = model_obj.lstm
+                elif hasattr(model_obj, 'gru'):
+                    recur_layer = model_obj.gru
+                elif hasattr(model_obj, 'rnn'):
+                    recur_layer = model_obj.rnn
+                else:
+                    raise Exception('ERROR: No recurrent layer found. Please specify it in the recur_layer argument.')
+            # get the unique subject ID's
+            subject_ids = np.unique(X[:, 0]).astype(int)
+            # maximum sequence length
+            max_seq_len = int(np.max(X[:, 1]) + 1)
+            # [TODO] Automatically find the number of features to remove. Currently assuming that it's 3 (id, ts and label)
+            explanations = np.zeros((len(subject_ids), max_seq_len, X.shape[1]-3))
+            # loop through the unique subject ID's
+            for id in tqdm(subject_ids, disable=kwargs['kwargs'].get("silent", False)):
+                # loop through the possible instances
+                for ts in tqdm(range(max_seq_len), disable=kwargs['kwargs'].get("silent", False)):
+                    # get the data corresponding to the current instance
+                    data = X[np.where((X[:, 0] == id) * (X[:, 1] == ts))]
+                    # remove unwanted features (id, ts and label)
+                    # [TODO] Remove unwanted features in a more generic way. I'm assuming that we need to remove the first two (id and ts) and the last one (label)
+                    data = data[:, 2:-1]
+                    if data.shape[0] is 0:
+                        # non existent instance (reached the end of the current sequence), move on to the next sequence
+                        break
+                    hidden_state = None
+                    # get the hidden state that the model receives as an input
+                    if ts > 0:
+                        # data from the previous instance(s) in the same sequence
+                        past_data = torch.from_numpy(X[np.where((X[:, 0] == id) * (X[:, 1] < ts))]).unsqueeze(0)
+                        # get the hidden state outputed from the previous recurrent cell
+                        # [TODO] Remove unwanted features in a more generic way. I'm assuming that we need to remove the first two (id and ts) and the last one (label)
+                        _, hidden_state = recur_layer(past_data[:, :, 2:-1].float())
+                        # avoid passing gradients from previous instances
+                        if type(hidden_state) is tuple:
+                            hidden_state = (hidden_state[0].detach(), hidden_state[1].detach())
+                        else:
+                            hidden_state.detach_()
+                    # add the hidden_state to the kwargs
+                    kwargs['hidden_state'] = hidden_state
+                    if self.keep_index:
+                        data = convert_to_instance_with_index(data, column_name, id * max_seq_len + ts, index_name)
+                    explanations[id, ts, :] = self.explain(data, **kwargs).squeeze()
+
+            return explanations
+
+            # [TODO] Don't understand the need for this out variable
+            # # vector-output
+            # s = explanations[0][0].shape
+            # if len(s) == 2:
+            #     outs = [np.zeros((X.shape[0], X.shape[1], s[0])) for j in range(s[1])]
+            #     for i in range(X.shape[0]):
+            #         for j in range(X.shape[1]):
+            #             for k in range(s[1]):
+            #                 outs[k][i][j] = explanations[i][j][:, k]
+            #     return outs
+            #
+            # # single-output
+            # else:
+            #     out = np.zeros((X.shape[0], X.shape[1], s[0]))
+            #     for i in range(X.shape[0]):
+            #         for j in range(X.shape[1]):
+            #             out[i][j] = explanations[i][j]
+            #     return out
 
         # single instance
-        if len(X.shape) == 1:
+        elif len(X.shape) == 1:
             data = X.reshape((1, X.shape[0]))
             if self.keep_index:
                 data = convert_to_instance_with_index(data, column_name, index_name, index_value)
@@ -202,7 +286,7 @@ class KernelExplainer(Explainer):
         # explain the whole dataset
         elif len(X.shape) == 2:
             explanations = []
-            for i in tqdm(range(X.shape[0]), disable=kwargs.get("silent", False)):
+            for i in tqdm(range(X.shape[0]), disable=kwargs['kwargs'].get("silent", False)):
                 data = X[i:i + 1, :]
                 if self.keep_index:
                     data = convert_to_instance_with_index(data, column_name, index_value[i:i + 1], index_name)
@@ -246,11 +330,21 @@ class KernelExplainer(Explainer):
                 if self.varyingFeatureGroups.shape[1] == 1:
                     self.varyingFeatureGroups = self.varyingFeatureGroups.flatten()
 
+        # get the current hidden state, if given
+        hidden_state = kwargs['kwargs'].get('hidden_state', None)
         # find f(x)
         if self.keep_index:
-            model_out = self.model.f(instance.convert_to_df())
+            if self.isRNN:
+                # only provide the hidden state argument if the model is a RNN type model
+                model_out = self.model.f(instance.convert_to_df(), hidden_state)
+            else:
+                model_out = self.model.f(instance.convert_to_df())
         else:
-            model_out = self.model.f(instance.x)
+            if self.isRNN:
+                # only provide the hidden state argument if the model is a RNN type model
+                model_out = self.model.f(instance.x, hidden_state)
+            else:
+                model_out = self.model.f(instance.x)
         if isinstance(model_out, (pd.DataFrame, pd.Series)):
             model_out = model_out.values
         self.fx = model_out[0]
@@ -273,10 +367,10 @@ class KernelExplainer(Explainer):
 
         # if more than one feature varies then we have to do real work
         else:
-            self.l1_reg = kwargs.get("l1_reg", "auto")
+            self.l1_reg = kwargs['kwargs'].get("l1_reg", "auto")
 
             # pick a reasonable number of samples if the user didn't specify how many they wanted
-            self.nsamples = kwargs.get("nsamples", "auto")
+            self.nsamples = kwargs['kwargs'].get("nsamples", "auto")
             if self.nsamples == "auto":
                 self.nsamples = 2 * self.M + 2**11
 
@@ -305,7 +399,7 @@ class KernelExplainer(Explainer):
             # given nsamples*remaining_weight_vector[subset_size]
             num_full_subsets = 0
             num_samples_left = self.nsamples
-            group_inds = np.arange(self.M, dtype='int64') 
+            group_inds = np.arange(self.M, dtype='int64')
             mask = np.zeros(self.M)
             remaining_weight_vector = copy.copy(weight_vector)
             for subset_size in range(1, num_subset_sizes + 1):
@@ -559,12 +653,12 @@ class KernelExplainer(Explainer):
             if isinstance(self.l1_reg, str) and self.l1_reg.startswith("num_features("):
                 r = int(self.l1_reg[len("num_features("):-1])
                 nonzero_inds = lars_path(mask_aug, eyAdj_aug, max_iter=r)[1]
-            
+
             # use an adaptive regularization method
             elif self.l1_reg == "auto" or self.l1_reg == "bic" or self.l1_reg == "aic":
                 c = "aic" if self.l1_reg == "auto" else self.l1_reg
                 nonzero_inds = np.nonzero(LassoLarsIC(criterion=c).fit(mask_aug, eyAdj_aug).coef_)[0]
-            
+
             # use a fixed regularization coeffcient
             else:
                 nonzero_inds = np.nonzero(Lasso(alpha=self.l1_reg).fit(mask_aug, eyAdj_aug).coef_)[0]

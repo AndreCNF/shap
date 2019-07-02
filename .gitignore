@@ -16,3 +16,6 @@ javascript/build/*
 .vscode
 shap/_cext.so
 shap/explainers/.DS_Store
+shap/_cext.cpython-37m-darwin.so
+shap/_cext.cpython-37m-darwin.so
+*.so

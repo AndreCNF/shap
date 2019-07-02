@@ -117,14 +117,14 @@ class DeepExplainer(Explainer):
 
         if framework == 'pytorch':
 
-        feedforward_args : None or list
+        feedforward_args : None or list, default None
             In case your model's feedforward method has additional parameters besides the input data,
             you can specify them in a list format in feedforward_args. This can be useful for instance
             if you're dealing with recurrent neural networks that receive inputs with variable sequence
             length, requiring padding and the list of original sequence lengths. Currently only works
             in PyTorch.
 
-        var_seq_len : bool
+        var_seq_len : bool, default False
             Indicates whether the input data has variable sequence length or not. If true, the lists of
             the original sequence lengths for the background data (used in the explainer) and of the
             test data (corresponding to X) must be provided as the first two items of feedforward_args.
