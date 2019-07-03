@@ -85,6 +85,22 @@ class KernelExplainer(Explainer):
         sense to connect them to the ouput with a link function where link(outout) = sum(phi).
         If the model output is a probability then the LogitLink link function makes the feature
         importance values have log-odds units.
+
+    isRNN : bool
+        Boolean that indicates if the model being analyzed is a recurrent neural network (RNN).
+        If so, it means that sequential data is being used, which requires some modifications
+        in the way SHAP values are calculated.
+
+    if isRNN is True:
+
+    id_col_num : int
+        Number that indicates in which column is the sequence / subject id. Defaults to 0.
+
+    ts_col_num : int
+        Number that indicates in which column is the instance / timestamp. Defaults to 1.
+
+    label_col_num : int
+        Number that indicates in which column is the label, if any. Defaults to None.
     """
 
     def __init__(self, model, data, link=IdentityLink(), **kwargs):
@@ -92,15 +108,30 @@ class KernelExplainer(Explainer):
         # convert incoming inputs to standardized iml objects
         self.link = convert_to_link(link)
         self.model = convert_to_model(model)
-        self.keep_index = kwargs['kwargs'].get("keep_index", False)
-        self.keep_index_ordered = kwargs['kwargs'].get("keep_index_ordered", False)
-        # remove unwanted features (id, ts and label)
-        # [TODO] Remove unwanted features in a more generic way. I'm assuming that we need to remove the first two (id and ts) and the last one (label)
-        self.data = convert_to_data(data[:, 2:-1], keep_index=self.keep_index)
+        self.keep_index = kwargs.get("keep_index", False)
+        self.keep_index_ordered = kwargs.get("keep_index_ordered", False)
+        # check if the model is a recurrent neural network
+        self.isRNN = kwargs.get('isRNN', True)
+        if self.isRNN and not str(type(data)).endswith("'pandas.core.frame.DataFrame'>"):
+            # number of the column that corresponds to the sequence / subject id
+            id_col_num = kwargs.get('id_col_num', 0)
+            # number of the column that corresponds to the instance / timestamp
+            ts_col_num = kwargs.get('ts_col_num', 1)
+            # number of the column that corresponds to the label
+            label_col_num = kwargs.get('label_col_num', None)
+            # all columns in the data
+            self.model_features = list(range(data.shape[1]))
+            # remove unwanted columns, so that we get only those that actually correspond to model usable features
+            [self.model_features.remove(col) for col in [id_col_num, ts_col_num, label_col_num] if col is not None]
+            self.data = convert_to_data(data[:, self.model_features], keep_index=self.keep_index)
+        else:
+            self.data = convert_to_data(data, keep_index=self.keep_index)
         self.col_names = None
         if str(type(data)).endswith("'pandas.core.frame.DataFrame'>"):
             # keep the column names so that data can be used in dataframe format
             self.col_names = data.columns
+        # [TODO] Fix the calculation of model_null by making it calculate the outputs of each patient separately,
+        # instead of considering the whole dataset as a single sequence, as it does now; pass in the self.isRNN
         model_null = match_model_to_data(self.model, self.data)
 
         # enforce our current input type limitations
@@ -185,15 +216,12 @@ class KernelExplainer(Explainer):
         assert x_type.endswith(arr_type) or sp.sparse.isspmatrix_lil(X), "Unknown instance type: " + x_type
         assert len(X.shape) == 1 or len(X.shape) == 2 or len(X.shape) == 3, "Instance must have 1, 2 or 3 dimensions!"
 
-        # check if the model is a recurrent neural network
-        self.isRNN = kwargs['kwargs'].get('isRNN', True)
-
         if self.isRNN:
             # check if the recurrent layer is specified
-            recur_layer = kwargs['kwargs'].get('recur_layer', None)
+            recur_layer = kwargs.get('recur_layer', None)
             if recur_layer is None:
                 # get the model object, so as to use its recurrent layer
-                model_obj = kwargs['kwargs'].get('model_obj', None)
+                model_obj = kwargs.get('model_obj', None)
                 assert model_obj is not None, 'If the model uses a recurrent neural network, either the recurrent layer or the full model object must be specified.'
                 # search for a recurrent layer
                 if hasattr(model_obj, 'lstm'):
@@ -208,17 +236,15 @@ class KernelExplainer(Explainer):
             subject_ids = np.unique(X[:, 0]).astype(int)
             # maximum sequence length
             max_seq_len = int(np.max(X[:, 1]) + 1)
-            # [TODO] Automatically find the number of features to remove. Currently assuming that it's 3 (id, ts and label)
-            explanations = np.zeros((len(subject_ids), max_seq_len, X.shape[1]-3))
+            explanations = np.zeros((len(subject_ids), max_seq_len, len(self.model_features)))
             # loop through the unique subject ID's
-            for id in tqdm(subject_ids, disable=kwargs['kwargs'].get("silent", False)):
+            for id in tqdm(subject_ids, disable=kwargs.get("silent", False)):
                 # loop through the possible instances
-                for ts in tqdm(range(max_seq_len), disable=kwargs['kwargs'].get("silent", False)):
+                for ts in tqdm(range(max_seq_len), disable=kwargs.get("silent", False)):
                     # get the data corresponding to the current instance
                     data = X[np.where((X[:, 0] == id) * (X[:, 1] == ts))]
                     # remove unwanted features (id, ts and label)
-                    # [TODO] Remove unwanted features in a more generic way. I'm assuming that we need to remove the first two (id and ts) and the last one (label)
-                    data = data[:, 2:-1]
+                    data = data[:, self.model_features]
                     if data.shape[0] is 0:
                         # non existent instance (reached the end of the current sequence), move on to the next sequence
                         break
@@ -228,8 +254,7 @@ class KernelExplainer(Explainer):
                         # data from the previous instance(s) in the same sequence
                         past_data = torch.from_numpy(X[np.where((X[:, 0] == id) * (X[:, 1] < ts))]).unsqueeze(0)
                         # get the hidden state outputed from the previous recurrent cell
-                        # [TODO] Remove unwanted features in a more generic way. I'm assuming that we need to remove the first two (id and ts) and the last one (label)
-                        _, hidden_state = recur_layer(past_data[:, :, 2:-1].float())
+                        _, hidden_state = recur_layer(past_data[:, :, self.model_features].float())
                         # avoid passing gradients from previous instances
                         if type(hidden_state) is tuple:
                             hidden_state = (hidden_state[0].detach(), hidden_state[1].detach())
@@ -286,7 +311,7 @@ class KernelExplainer(Explainer):
         # explain the whole dataset
         elif len(X.shape) == 2:
             explanations = []
-            for i in tqdm(range(X.shape[0]), disable=kwargs['kwargs'].get("silent", False)):
+            for i in tqdm(range(X.shape[0]), disable=kwargs.get("silent", False)):
                 data = X[i:i + 1, :]
                 if self.keep_index:
                     data = convert_to_instance_with_index(data, column_name, index_value[i:i + 1], index_name)
@@ -331,7 +356,7 @@ class KernelExplainer(Explainer):
                     self.varyingFeatureGroups = self.varyingFeatureGroups.flatten()
 
         # get the current hidden state, if given
-        hidden_state = kwargs['kwargs'].get('hidden_state', None)
+        hidden_state = kwargs.get('hidden_state', None)
         # find f(x)
         if self.keep_index:
             if self.isRNN:
@@ -367,10 +392,10 @@ class KernelExplainer(Explainer):
 
         # if more than one feature varies then we have to do real work
         else:
-            self.l1_reg = kwargs['kwargs'].get("l1_reg", "auto")
+            self.l1_reg = kwargs.get("l1_reg", "auto")
 
             # pick a reasonable number of samples if the user didn't specify how many they wanted
-            self.nsamples = kwargs['kwargs'].get("nsamples", "auto")
+            self.nsamples = kwargs.get("nsamples", "auto")
             if self.nsamples == "auto":
                 self.nsamples = 2 * self.M + 2**11
 
