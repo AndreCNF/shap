@@ -101,6 +101,11 @@ class KernelExplainer(Explainer):
 
     label_col_num : int
         Number that indicates in which column is the label, if any. Defaults to None.
+
+    recur_layer : torch.nn.LSTM or torch.nn.GRU or torch.nn.RNN, default None
+        Pointer to the recurrent layer in the model, if it exists. It should
+        either be a LSTM, GRU or RNN network. If none is specified, the
+        method will automatically search for a recurrent layer in the model.
     """
 
     def __init__(self, model, data, link=IdentityLink(), **kwargs):
@@ -111,28 +116,51 @@ class KernelExplainer(Explainer):
         self.keep_index = kwargs.get("keep_index", False)
         self.keep_index_ordered = kwargs.get("keep_index_ordered", False)
         # check if the model is a recurrent neural network
-        self.isRNN = kwargs.get('isRNN', True)
+        self.isRNN = kwargs.get('isRNN', False)
         if self.isRNN and not str(type(data)).endswith("'pandas.core.frame.DataFrame'>"):
             # number of the column that corresponds to the sequence / subject id
-            id_col_num = kwargs.get('id_col_num', 0)
+            self.id_col_num = kwargs.get('id_col_num', 0)
             # number of the column that corresponds to the instance / timestamp
-            ts_col_num = kwargs.get('ts_col_num', 1)
+            self.ts_col_num = kwargs.get('ts_col_num', 1)
             # number of the column that corresponds to the label
             label_col_num = kwargs.get('label_col_num', None)
             # all columns in the data
             self.model_features = list(range(data.shape[1]))
             # remove unwanted columns, so that we get only those that actually correspond to model usable features
-            [self.model_features.remove(col) for col in [id_col_num, ts_col_num, label_col_num] if col is not None]
+            [self.model_features.remove(col) for col in [self.id_col_num, self.ts_col_num, label_col_num] if col is not None]
             self.data = convert_to_data(data[:, self.model_features], keep_index=self.keep_index)
+            # check if the recurrent layer is specified
+            self.recur_layer = kwargs.get('recur_layer', None)
+            if self.recur_layer is None:
+                # get the model object, so as to use its recurrent layer
+                model_obj = kwargs.get('model_obj', None)
+                assert model_obj is not None, 'If the model uses a recurrent neural network, either the recurrent layer or the full model object must be specified.'
+                # search for a recurrent layer
+                if hasattr(model_obj, 'lstm'):
+                    self.recur_layer = model_obj.lstm
+                elif hasattr(model_obj, 'gru'):
+                    self.recur_layer = model_obj.gru
+                elif hasattr(model_obj, 'rnn'):
+                    self.recur_layer = model_obj.rnn
+                else:
+                    raise Exception('ERROR: No recurrent layer found. Please specify it in the recur_layer argument.')
+            # get the unique subject ID's
+            self.subject_ids = np.unique(data[:, self.id_col_num]).astype(int)
+            # maximum sequence length
+            self.max_seq_len = int(np.max(data[:, self.ts_col_num]) + 1)
+            # calculate the output for all the background data
+            model_null = match_model_to_data(self.model, data, self.isRNN, self.model_features,
+                                             self.id_col_num, self.ts_col_num, self.recur_layer,
+                                             self.subject_ids, self.max_seq_len, self.model.f,
+                                             silent=kwargs.get("silent", False))
         else:
             self.data = convert_to_data(data, keep_index=self.keep_index)
+            # calculate the output for all the background data
+            model_null = match_model_to_data(self.model, self.data)
         self.col_names = None
         if str(type(data)).endswith("'pandas.core.frame.DataFrame'>"):
             # keep the column names so that data can be used in dataframe format
             self.col_names = data.columns
-        # [TODO] Fix the calculation of model_null by making it calculate the outputs of each patient separately,
-        # instead of considering the whole dataset as a single sequence, as it does now; pass in the self.isRNN
-        model_null = match_model_to_data(self.model, self.data)
 
         # enforce our current input type limitations
         assert isinstance(self.data, DenseData) or isinstance(self.data, SparseData), \
@@ -217,32 +245,13 @@ class KernelExplainer(Explainer):
         assert len(X.shape) == 1 or len(X.shape) == 2 or len(X.shape) == 3, "Instance must have 1, 2 or 3 dimensions!"
 
         if self.isRNN:
-            # check if the recurrent layer is specified
-            recur_layer = kwargs.get('recur_layer', None)
-            if recur_layer is None:
-                # get the model object, so as to use its recurrent layer
-                model_obj = kwargs.get('model_obj', None)
-                assert model_obj is not None, 'If the model uses a recurrent neural network, either the recurrent layer or the full model object must be specified.'
-                # search for a recurrent layer
-                if hasattr(model_obj, 'lstm'):
-                    recur_layer = model_obj.lstm
-                elif hasattr(model_obj, 'gru'):
-                    recur_layer = model_obj.gru
-                elif hasattr(model_obj, 'rnn'):
-                    recur_layer = model_obj.rnn
-                else:
-                    raise Exception('ERROR: No recurrent layer found. Please specify it in the recur_layer argument.')
-            # get the unique subject ID's
-            subject_ids = np.unique(X[:, 0]).astype(int)
-            # maximum sequence length
-            max_seq_len = int(np.max(X[:, 1]) + 1)
-            explanations = np.zeros((len(subject_ids), max_seq_len, len(self.model_features)))
+            explanations = np.zeros((len(self.subject_ids), self.max_seq_len, len(self.model_features)))
             # loop through the unique subject ID's
-            for id in tqdm(subject_ids, disable=kwargs.get("silent", False)):
+            for id in tqdm(self.subject_ids, disable=kwargs.get("silent", False)):
                 # loop through the possible instances
-                for ts in tqdm(range(max_seq_len), disable=kwargs.get("silent", False)):
+                for ts in tqdm(range(self.max_seq_len), disable=kwargs.get("silent", False)):
                     # get the data corresponding to the current instance
-                    data = X[np.where((X[:, 0] == id) * (X[:, 1] == ts))]
+                    data = X[np.where((X[:, self.id_col_num] == id) * (X[:, self.ts_col_num] == ts))]
                     # remove unwanted features (id, ts and label)
                     data = data[:, self.model_features]
                     if data.shape[0] is 0:
@@ -252,9 +261,9 @@ class KernelExplainer(Explainer):
                     # get the hidden state that the model receives as an input
                     if ts > 0:
                         # data from the previous instance(s) in the same sequence
-                        past_data = torch.from_numpy(X[np.where((X[:, 0] == id) * (X[:, 1] < ts))]).unsqueeze(0)
+                        past_data = torch.from_numpy(X[np.where((X[:, self.id_col_num] == id) * (X[:, self.ts_col_num] < ts))]).unsqueeze(0)
                         # get the hidden state outputed from the previous recurrent cell
-                        _, hidden_state = recur_layer(past_data[:, :, self.model_features].float())
+                        _, hidden_state = self.recur_layer(past_data[:, :, self.model_features].float())
                         # avoid passing gradients from previous instances
                         if type(hidden_state) is tuple:
                             hidden_state = (hidden_state[0].detach(), hidden_state[1].detach())
@@ -263,7 +272,7 @@ class KernelExplainer(Explainer):
                     # add the hidden_state to the kwargs
                     kwargs['hidden_state'] = hidden_state
                     if self.keep_index:
-                        data = convert_to_instance_with_index(data, column_name, id * max_seq_len + ts, index_name)
+                        data = convert_to_instance_with_index(data, column_name, id * self.max_seq_len + ts, index_name)
                     explanations[id, ts, :] = self.explain(data, **kwargs).squeeze()
 
             return explanations

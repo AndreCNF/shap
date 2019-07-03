@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import scipy as sp
 from scipy.spatial.distance import pdist
+from tqdm.autonotebook import tqdm
+import torch
 
 import_errors = {}
 
@@ -74,12 +76,48 @@ def convert_to_model(val):
         return Model(val, None)
 
 
-def match_model_to_data(model, data):
+def match_model_to_data(model, data, isRNN=False, model_features=None,
+                        id_col_num=None, ts_col_num=None, recur_layer=None,
+                        subject_ids=None, max_seq_len=None, f=None, silent=False):
     assert isinstance(model, Model), "model must be of type Model!"
 
     try:
         if isinstance(data, DenseDataWithIndex):
             out_val = model.f(data.convert_to_df())
+        elif isRNN:
+            X = data
+            # [TODO] Adjust code to be able to handle multiple outputs; currently assuming that it's only one output
+            # out_val = np.zeros((X.shape[0], n_outputs))
+            out_val = np.zeros((X.shape[0], 1))
+            # count the instances to get the original index
+            idx_count = 0
+            # loop through the unique subject ID's
+            for id in tqdm(subject_ids, disable=silent):
+                # loop through the possible instances
+                for ts in tqdm(range(max_seq_len), disable=silent):
+                    # get the data corresponding to the current instance / timestamp
+                    inst_data = X[np.where((X[:, id_col_num] == id) * (X[:, ts_col_num] == ts))]
+                    # remove unwanted features (id, ts and label)
+                    inst_data = inst_data[:, model_features]
+                    if inst_data.shape[0] is 0:
+                        # non existent instance (reached the end of the current sequence), move on to the next sequence
+                        break
+                    hidden_state = None
+                    # get the hidden state that the model receives as an input
+                    if ts > 0:
+                        # data from the previous instance(s) in the same sequence
+                        past_data = torch.from_numpy(X[np.where((X[:, id_col_num] == id) * (X[:, ts_col_num] < ts))]).unsqueeze(0)
+                        # get the hidden state outputed from the previous recurrent cell
+                        _, hidden_state = recur_layer(past_data[:, :, model_features].float())
+                        # avoid passing gradients from previous instances
+                        if type(hidden_state) is tuple:
+                            hidden_state = (hidden_state[0].detach(), hidden_state[1].detach())
+                        else:
+                            hidden_state.detach_()
+                    # calculate the output for the current instance / timestamp
+                    out_val[idx_count] = f(inst_data, hidden_state)
+                    # increment the index count
+                    idx_count += 1
         else:
             out_val = model.f(data.data)
     except:

@@ -19,3 +19,5 @@ shap/explainers/.DS_Store
 shap/_cext.cpython-37m-darwin.so
 shap/_cext.cpython-37m-darwin.so
 *.so
+shap/_cext.cpython-37m-darwin.so
+*.so
