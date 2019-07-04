@@ -5,8 +5,11 @@ import scipy as sp
 from scipy.spatial.distance import pdist
 from tqdm.autonotebook import tqdm
 import torch
+import sys
+import warnings
 
-import_errors = {}
+if (sys.version_info < (3, 0)):
+    warnings.warn("As of version 0.29.0 shap only supports Python 3 (not 2)!")
 
 def assert_import(package_name):
     global import_errors

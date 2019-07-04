@@ -119,8 +119,10 @@ class TreeExplainer(Explainer):
             self.expected_value = self.__dynamic_expected_value
         elif data is not None:
             self.expected_value = self.model.predict(self.data, output=model_output).mean(0)
+            if hasattr(self.expected_value, '__len__') and len(self.expected_value) == 1:
+                self.expected_value = self.expected_value[0]
         elif hasattr(self.model, "node_sample_weight"):
-            self.expected_value = self.model.values[:,0].sum(0)
+            self.expected_value = self.model.values[:,0].sum(0)[0]
             self.expected_value += self.model.base_offset
 
     def __dynamic_expected_value(self, y):
@@ -458,7 +460,7 @@ class TreeEnsemble:
                 self.base_offset = model.init_.mean
             elif str(type(model.init_)).endswith("ensemble.gradient_boosting.QuantileEstimator'>"):
                 self.base_offset = model.init_.quantile
-            if str(type(model.init_)).endswith("sklearn.dummy.DummyRegressor'>"):
+            elif str(type(model.init_)).endswith("sklearn.dummy.DummyRegressor'>"):
                 self.base_offset = model.init_.constant_[0]
             else:
                 assert False, "Unsupported init model type: " + str(type(model.init_))
@@ -608,7 +610,7 @@ class TreeEnsemble:
             raise Exception("Model type not yet supported by TreeExplainer: " + str(type(model)))
         
         # build a dense numpy version of all the tree objects
-        if self.trees is not None:
+        if self.trees is not None and self.trees:
             max_nodes = np.max([len(t.values) for t in self.trees])
             assert len(np.unique([t.values.shape[1] for t in self.trees])) == 1, "All trees in the ensemble must have the same output dimension!"
             ntrees = len(self.trees)

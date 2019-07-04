@@ -9,7 +9,7 @@ import itertools
 import warnings
 from sklearn.linear_model import LassoLarsIC, Lasso, lars_path
 from sklearn.cluster import KMeans
-from tqdm.autonotebook import tqdm
+from tqdm.auto import tqdm
 from .explainer import Explainer
 import torch
 
@@ -184,7 +184,7 @@ class KernelExplainer(Explainer):
         if isinstance(model_null, (pd.DataFrame, pd.Series)):
             model_null = np.squeeze(model_null.values)
         self.fnull = np.sum((model_null.T * self.data.weights).T, 0)
-        self.expected_value = self.fnull
+        self.expected_value = self.linkfv(self.fnull)
 
         # see if we have a vector output
         self.vector_out = True
