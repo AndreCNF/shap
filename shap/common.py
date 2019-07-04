@@ -8,6 +8,7 @@ import torch
 import sys
 import warnings
 
+import_errors = {}
 if (sys.version_info < (3, 0)):
     warnings.warn("As of version 0.29.0 shap only supports Python 3 (not 2)!")
 
