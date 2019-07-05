@@ -144,14 +144,14 @@ class KernelExplainer(Explainer):
                     self.recur_layer = model_obj.rnn
                 else:
                     raise Exception('ERROR: No recurrent layer found. Please specify it in the recur_layer argument.')
-            # get the unique subject ID's
-            self.subject_ids = np.unique(data[:, self.id_col_num]).astype(int)
-            # maximum sequence length
+            # get the unique subject ID's in the background data
+            subject_ids = np.unique(data[:, self.id_col_num]).astype(int)
+            # maximum sequence length in the background data
             self.max_seq_len = int(np.max(data[:, self.ts_col_num]) + 1)
             # calculate the output for all the background data
             model_null = match_model_to_data(self.model, data, self.isRNN, self.model_features,
                                              self.id_col_num, self.ts_col_num, self.recur_layer,
-                                             self.subject_ids, self.max_seq_len, self.model.f,
+                                             subject_ids, self.max_seq_len, self.model.f,
                                              silent=kwargs.get("silent", False))
         else:
             self.data = convert_to_data(data, keep_index=self.keep_index)
@@ -245,6 +245,14 @@ class KernelExplainer(Explainer):
         assert len(X.shape) == 1 or len(X.shape) == 2 or len(X.shape) == 3, "Instance must have 1, 2 or 3 dimensions!"
 
         if self.isRNN:
+            # get the unique subject ID's in the test data
+            self.subject_ids = np.unique(X[:, self.id_col_num]).astype(int)
+            # maximum sequence length in the test data
+            max_seq_len = int(np.max(X[:, self.ts_col_num]) + 1)
+            # compare with the maximum sequence length in the background data
+            if max_seq_len > self.max_seq_len:
+                # update maximum sequence length
+                self.max_seq_len = max_seq_len
             explanations = np.zeros((len(self.subject_ids), self.max_seq_len, len(self.model_features)))
             # loop through the unique subject ID's
             for id in tqdm(self.subject_ids, disable=kwargs.get("silent", False)):
