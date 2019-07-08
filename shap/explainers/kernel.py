@@ -257,8 +257,10 @@ class KernelExplainer(Explainer):
         assert len(X.shape) == 1 or len(X.shape) == 2 or len(X.shape) == 3, "Instance must have 1, 2 or 3 dimensions!"
 
         if self.isRNN:
-            # get the unique subject ID's in the test data
-            self.subject_ids = np.unique(X[:, self.id_col_num]).astype(int)
+            # get the unique subject ID's in the test data, in the original order
+            self.subject_ids, indeces = np.unique(X[:, self.id_col_num], return_index=True)
+            sorted_idx = np.argsort(indeces)
+            self.subject_ids = self.subject_ids[sorted_idx].astype(int)
             # maximum sequence length in the test data
             max_seq_len = int(np.max(X[:, self.ts_col_num]) + 1)
             # compare with the maximum sequence length in the background data
@@ -266,6 +268,8 @@ class KernelExplainer(Explainer):
                 # update maximum sequence length
                 self.max_seq_len = max_seq_len
             explanations = np.zeros((len(self.subject_ids), self.max_seq_len, len(self.model_features)))
+            # count the order of the sequences being iterated
+            seq_count = 0
             # loop through the unique subject ID's
             for id in tqdm(self.subject_ids, disable=kwargs.get("silent", False)):
                 # loop through the possible instances
@@ -292,8 +296,9 @@ class KernelExplainer(Explainer):
                     # add the hidden_state to the kwargs
                     kwargs['hidden_state'] = hidden_state
                     if self.keep_index:
-                        data = convert_to_instance_with_index(data, column_name, id * self.max_seq_len + ts, index_name)
-                    explanations[id, ts, :] = self.explain(data, **kwargs).squeeze()
+                        data = convert_to_instance_with_index(data, column_name, seq_count * self.max_seq_len + ts, index_name)
+                    explanations[seq_count, ts, :] = self.explain(data, **kwargs).squeeze()
+                    seq_count += 1
 
             return explanations
 
