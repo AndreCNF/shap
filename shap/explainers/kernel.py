@@ -298,7 +298,7 @@ class KernelExplainer(Explainer):
                     if self.keep_index:
                         data = convert_to_instance_with_index(data, column_name, seq_count * self.max_seq_len + ts, index_name)
                     explanations[seq_count, ts, :] = self.explain(data, **kwargs).squeeze()
-                    seq_count += 1
+                seq_count += 1
 
             return explanations
 
