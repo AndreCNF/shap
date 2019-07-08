@@ -128,7 +128,18 @@ class KernelExplainer(Explainer):
             self.model_features = list(range(data.shape[1]))
             # remove unwanted columns, so that we get only those that actually correspond to model usable features
             [self.model_features.remove(col) for col in [self.id_col_num, self.ts_col_num, label_col_num] if col is not None]
-            self.data = convert_to_data(data[:, self.model_features], keep_index=self.keep_index)
+            # maximum background samples to use
+            self.max_bkgnd_samples = 20
+            if data.shape[0] > self.max_bkgnd_samples:
+                # use k-means to avoid slow processing of a lot of samples
+                self.data = kmeans(data[:, self.model_features], k=self.max_bkgnd_samples)
+                # get the weights corresponding to all the original data
+                num_samples = data.shape[0]
+                self.weights = np.ones(num_samples)
+                self.weights /= np.sum(self.weights)
+            else:
+                self.data = convert_to_data(data[:, self.model_features], keep_index=self.keep_index)
+                self.weights = self.data.weights
             # check if the recurrent layer is specified
             self.recur_layer = kwargs.get('recur_layer', None)
             if self.recur_layer is None:
@@ -155,6 +166,7 @@ class KernelExplainer(Explainer):
                                              silent=kwargs.get("silent", False))
         else:
             self.data = convert_to_data(data, keep_index=self.keep_index)
+            self.weights = self.data.weights
             # calculate the output for all the background data
             model_null = match_model_to_data(self.model, self.data)
         self.col_names = None
@@ -183,7 +195,7 @@ class KernelExplainer(Explainer):
         # find E_x[f(x)]
         if isinstance(model_null, (pd.DataFrame, pd.Series)):
             model_null = np.squeeze(model_null.values)
-        self.fnull = np.sum((model_null.T * self.data.weights).T, 0)
+        self.fnull = np.sum((model_null.T * self.weights).T, 0)
         self.expected_value = self.linkfv(self.fnull)
 
         # see if we have a vector output
@@ -259,7 +271,7 @@ class KernelExplainer(Explainer):
                 # loop through the possible instances
                 for ts in tqdm(range(self.max_seq_len), disable=kwargs.get("silent", False)):
                     # get the data corresponding to the current instance
-                    data = X[np.where((X[:, self.id_col_num] == id) * (X[:, self.ts_col_num] == ts))]
+                    data = X[(X[:, self.id_col_num] == id) * (X[:, self.ts_col_num] == ts)]
                     # remove unwanted features (id, ts and label)
                     data = data[:, self.model_features]
                     if data.shape[0] is 0:
@@ -646,6 +658,7 @@ class KernelExplainer(Explainer):
         self.nsamplesAdded += 1
 
     def run(self):
+        # [TODO] The inefficiency issue is probably derived from here. It seems to want to run the requested number of samples TIMES the TOTAL number of background samples!
         num_to_run = self.nsamplesAdded * self.N - self.nsamplesRun * self.N
         data = self.synth_data[self.nsamplesRun*self.N:self.nsamplesAdded*self.N,:]
         if self.keep_index:
@@ -664,7 +677,7 @@ class KernelExplainer(Explainer):
         for i in range(self.nsamplesRun, self.nsamplesAdded):
             eyVal = np.zeros(self.D)
             for j in range(0, self.N):
-                eyVal += self.y[i * self.N + j, :] * self.data.weights[j]
+                eyVal += self.y[i * self.N + j, :] * self.weights[j]
 
             self.ey[i, :] = eyVal
             self.nsamplesRun += 1

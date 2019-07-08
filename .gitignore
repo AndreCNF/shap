@@ -21,3 +21,4 @@ shap/_cext.cpython-37m-darwin.so
 *.so
 shap/_cext.cpython-37m-darwin.so
 *.so
+shap/.DS_Store
