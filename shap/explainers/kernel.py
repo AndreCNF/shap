@@ -129,7 +129,7 @@ class KernelExplainer(Explainer):
             # remove unwanted columns, so that we get only those that actually correspond to model usable features
             [self.model_features.remove(col) for col in [self.id_col_num, self.ts_col_num, label_col_num] if col is not None]
             # maximum background samples to use
-            self.max_bkgnd_samples = 20
+            self.max_bkgnd_samples = kwargs.get('max_bkgnd_samples', 20)
             if data.shape[0] > self.max_bkgnd_samples:
                 # use k-means to avoid slow processing of a lot of samples
                 self.data = kmeans(data[:, self.model_features], k=self.max_bkgnd_samples)
