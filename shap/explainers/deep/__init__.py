@@ -92,7 +92,9 @@ class DeepExplainer(Explainer):
 
         self.expected_value = self.explainer.expected_value
 
+
     def shap_values(self, X, ranked_outputs=None, output_rank_order='max', feedforward_args=None, var_seq_len=False, see_progress=False):
+
         """ Return approximate SHAP values for the model applied to the data given by X.
 
         Parameters
@@ -147,6 +149,6 @@ class DeepExplainer(Explainer):
         were chosen as "top".
         """
         if self.framework == 'tensorflow':
-            return self.explainer.shap_values(X, ranked_outputs, output_rank_order)
+            return self.explainer.shap_values(X, ranked_outputs, output_rank_order, check_additivity=check_additivity)
         elif self.framework == 'pytorch':
-            return self.explainer.shap_values(X, ranked_outputs, output_rank_order, feedforward_args, var_seq_len, see_progress)
+            return self.explainer.shap_values(X, ranked_outputs, output_rank_order, feedforward_args, var_seq_len, see_progress, check_additivity=check_additivity)

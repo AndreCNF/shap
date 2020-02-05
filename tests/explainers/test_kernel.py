@@ -1,7 +1,5 @@
-import matplotlib
 import numpy as np
 import scipy as sp
-matplotlib.use('Agg')
 import shap
 
 
@@ -176,3 +174,27 @@ def test_kernel_sparse_vs_dense_multirow_background():
     sparse_shap_values = sparse_explainer.shap_values(X_sparse_test)
 
     assert(np.allclose(shap_values, sparse_shap_values, rtol=1e-05, atol=1e-05))
+
+    # Use sparse evaluation examples with dense background
+    sparse_sv_dense_bg = explainer.shap_values(X_sparse_test)
+    assert(np.allclose(shap_values, sparse_sv_dense_bg, rtol=1e-05, atol=1e-05))
+
+
+def test_linear():
+    """tests that KernelExplainer returns the correct result when the model is linear
+    (as per corollary 1 of https://arxiv.org/abs/1705.07874)"""
+
+    np.random.seed(2)
+    x = np.random.normal(size=(200, 3), scale=1)
+
+    # a linear model
+    def f(x):
+        return x[:, 0] + 2.0*x[:, 1]
+
+    phi = shap.KernelExplainer(f, x).shap_values(x, l1_reg="num_features(2)", silent=True)
+    assert phi.shape == x.shape
+
+    # corollary 1
+    expected = (x - x.mean(0)) * np.array([1.0, 2.0, 0.0])
+
+    np.testing.assert_allclose(expected, phi, rtol=1e-3)

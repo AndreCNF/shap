@@ -1,7 +1,6 @@
 import React from "react";
-import { select, selectAll, mouse } from "d3-selection";
+import { select, mouse } from "d3-selection";
 import { scaleLinear, scaleTime } from "d3-scale";
-import { extent } from "d3-array";
 import { format } from "d3-format";
 import { timeFormat, timeParse } from "d3-time-format";
 import { axisBottom, axisLeft } from "d3-axis";
@@ -11,7 +10,6 @@ import {
   sortBy,
   min,
   max,
-  copy,
   map,
   each,
   sum,
@@ -151,7 +149,7 @@ class AdditiveForceArrayVisualizer extends React.Component {
     this.ylabel.node().onchange = () => this.internalDraw();
 
     this.svg.on("mousemove", x => this.mouseMoved(x));
-    this.svg.on("click", x => alert("This original index of the sample you clicked is " + this.nearestExpIndex));
+    this.svg.on("click", () => alert("This original index of the sample you clicked is " + this.nearestExpIndex));
 
     this.svg.on("mouseout", x => this.mouseOut(x));
 
@@ -176,7 +174,7 @@ class AdditiveForceArrayVisualizer extends React.Component {
     this.hoverGroup2.attr("display", "none");
   }
 
-  mouseMoved(event) {
+  mouseMoved() {
     let i, nearestExp;
 
     this.hoverLine.attr("display", "");
@@ -190,16 +188,18 @@ class AdditiveForceArrayVisualizer extends React.Component {
 
     let x = mouse(this.svg.node())[0];
     if (this.props.explanations) {
-      for (i = 0; i < this.props.explanations.length; ++i) {
+
+      // Find the nearest explanation to the cursor position
+      for (i = 0; i < this.currExplanations.length; ++i) {
         if (
           !nearestExp ||
           Math.abs(nearestExp.xmapScaled - x) >
-            Math.abs(this.props.explanations[i].xmapScaled - x)
+            Math.abs(this.currExplanations[i].xmapScaled - x)
         ) {
-          nearestExp = this.props.explanations[i];
-          this.nearestExpIndex = i;
+          nearestExp = this.currExplanations[i];
         }
       }
+      this.nearestExpIndex = nearestExp.origInd;
 
       this.hoverLine
         .attr("x1", nearestExp.xmapScaled)
@@ -228,8 +228,6 @@ class AdditiveForceArrayVisualizer extends React.Component {
         .attr("x", this.leftOffset - 6)
         .attr("y", nearestExp.joinPointy)
         .text(this.ytickFormat(this.invLinkFunction(nearestExp.joinPoint)));
-
-      let P = this.props.featureNames.length;
 
       let posFeatures = [];
       let lastPos, pos;
@@ -402,7 +400,7 @@ class AdditiveForceArrayVisualizer extends React.Component {
     if (this.props.ordering_keys != null)  {
       options.unshift("sample order by key");
     }
-    
+
     let xLabelOptions = this.xlabel.selectAll("option").data(options);
     xLabelOptions
       .enter()
@@ -454,7 +452,7 @@ class AdditiveForceArrayVisualizer extends React.Component {
 
 
     // Set scaleTime if time ticks provided for original ordering
-    let isTimeScale = ((xsort === "sample order by key") && 
+    let isTimeScale = ((xsort === "sample order by key") &&
 		       (this.props.ordering_keys_time_format != null));
     if (isTimeScale)  {
 	    this.xscale = scaleTime();
@@ -496,7 +494,7 @@ class AdditiveForceArrayVisualizer extends React.Component {
 
       // Build explanations where effects are averaged when the x values are identical
       explanations = [];
-      let laste, copye, e;
+      let laste, copye;
       for (let i = 0; i < explanations2.length; ++i) {
         let e = explanations2[i];
         if (
@@ -538,13 +536,15 @@ class AdditiveForceArrayVisualizer extends React.Component {
     //let filteredFeatureNames = this.props.featureNames;
     let yvalue = this.ylabel.node().value;
     if (yvalue !== "model output value") {
-      explanations = cloneDeep(explanations);
+      let olde = explanations;
+      explanations = cloneDeep(explanations); // TODO: add pointer from old explanations which is prop.explanations to new ones
       let ind = findKey(this.props.featureNames, x => x === yvalue);
 
       for (let i = 0; i < explanations.length; ++i) {
         let v = explanations[i].features[ind];
         explanations[i].features = {};
         explanations[i].features[ind] = v;
+        olde[i].remapped_version = explanations[i];
       }
       //filteredFeatureNames = [this.props.featureNames[ind]];
       this.currUsedFeatures = [ind];
@@ -614,7 +614,6 @@ class AdditiveForceArrayVisualizer extends React.Component {
       let data2 = explanations[ind].features;
       //console.log(length(data2))
 
-      let totalEffect = sum(map(data2, x => Math.abs(x.effect)));
       let totalNegEffects =
         sum(map(filter(data2, x => x.effect < 0), x => -x.effect)) || 0;
 
@@ -705,7 +704,7 @@ class AdditiveForceArrayVisualizer extends React.Component {
       })
       .attr("fill", "none")
       .attr("stroke-width", 1)
-      .attr("stroke", d => this.colors[0].brighter(1.2));
+      .attr("stroke", () => this.colors[0].brighter(1.2));
     dividersPos.exit().remove();
 
     let dividersNeg = this.mainGroup
@@ -725,7 +724,7 @@ class AdditiveForceArrayVisualizer extends React.Component {
       })
       .attr("fill", "none")
       .attr("stroke-width", 1)
-      .attr("stroke", d => this.colors[1].brighter(1.5));
+      .attr("stroke", () => this.colors[1].brighter(1.5));
     dividersNeg.exit().remove();
 
     let boxBounds = function(es, ind, starti, endi, featType) {
@@ -762,7 +761,6 @@ class AdditiveForceArrayVisualizer extends React.Component {
       for (let ind of this.currUsedFeatures) {
         let starti = 0,
           endi = 0,
-          i,
           boxWidth = 0,
           hbounds = { top: 0, bottom: 0 };
         let newHbounds;

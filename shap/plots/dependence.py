@@ -49,7 +49,7 @@ def dependence_plot(ind, shap_values, features, feature_names=None, display_feat
         as a string. If "auto" then shap.common.approximate_interactions is used to pick what
         seems to be the strongest interaction (note that to find to true stongest interaction you
         need to compute the SHAP interaction values).
-        
+
     x_jitter : float (0 - 1)
         Adds random jitter to feature values. May increase plot readability when feature
         is discrete.
@@ -74,14 +74,10 @@ def dependence_plot(ind, shap_values, features, feature_names=None, display_feat
 
     if cmap is None:
         cmap = colors.red_blue
-        
-    # create a matplotlib figure, if `ax` hasn't been specified.
-    if not ax:
-        figsize = (7.5, 5) if interaction_index != ind else (6, 5)
-        fig = pl.figure(figsize=figsize)
-        ax = fig.gca()
-    else:
-        fig = ax.get_figure()
+
+    if type(shap_values) is list:
+        raise TypeError("The passed shap_values are a list not an array! If you have a list of explanations try " \
+                        "passing shap_values[0] instead to explain the first output class of a multi-output model.")
 
     # convert from DataFrames if we got any
     if str(type(features)).endswith("'pandas.core.frame.DataFrame'>"):
@@ -105,9 +101,24 @@ def dependence_plot(ind, shap_values, features, feature_names=None, display_feat
         features = np.reshape(features, len(features), 1)
 
     ind = convert_name(ind, shap_values, feature_names)
-    
+
+    # guess what other feature as the stongest interaction with the plotted feature
+    if not hasattr(ind, "__len__"):
+        if interaction_index == "auto":
+            interaction_index = approximate_interactions(ind, shap_values, features)[0]
+        interaction_index = convert_name(interaction_index, shap_values, feature_names)
+    categorical_interaction = False
+
+    # create a matplotlib figure, if `ax` hasn't been specified.
+    if not ax:
+        figsize = (7.5, 5) if interaction_index != ind and interaction_index is not None else (6, 5)
+        fig = pl.figure(figsize=figsize)
+        ax = fig.gca()
+    else:
+        fig = ax.get_figure()
+
     # plotting SHAP interaction values
-    if len(shap_values.shape) == 3 and len(ind) == 2:
+    if len(shap_values.shape) == 3 and hasattr(ind, "__len__") and len(ind) == 2:
         ind1 = convert_name(ind[0], shap_values, feature_names)
         ind2 = convert_name(ind[1], shap_values, feature_names)
         if ind1 == ind2:
@@ -115,11 +126,15 @@ def dependence_plot(ind, shap_values, features, feature_names=None, display_feat
         else:
             proj_shap_values = shap_values[:, ind2, :] * 2  # off-diag values are split in half
 
+        # there is no interaction coloring for the main effect
+        if ind1 == ind2:
+            fig.set_size_inches(6, 5, forward=True)
+
         # TODO: remove recursion; generally the functions should be shorter for more maintainable code
         dependence_plot(
             ind1, proj_shap_values, features, feature_names=feature_names,
-            interaction_index=ind2, display_features=display_features, ax=ax, show=False,
-            xmin=xmin, xmax=xmax
+            interaction_index=(None if ind1 == ind2 else ind2), display_features=display_features, ax=ax, show=False,
+            xmin=xmin, xmax=xmax, x_jitter=x_jitter, alpha=alpha
         )
         if ind1 == ind2:
             ax.set_ylabel(labels['MAIN_EFFECT'] % feature_names[ind1])
@@ -152,12 +167,6 @@ def dependence_plot(ind, shap_values, features, feature_names=None, display_feat
         feature_names = [feature_names]
     name = feature_names[ind]
 
-    # guess what other feature as the stongest interaction with the plotted feature
-    if interaction_index == "auto":
-        interaction_index = approximate_interactions(ind, shap_values, features)[0]
-    interaction_index = convert_name(interaction_index, shap_values, feature_names)
-    categorical_interaction = False
-
     # get both the raw and display color values
     color_norm = None
     if interaction_index is not None:
@@ -165,6 +174,9 @@ def dependence_plot(ind, shap_values, features, feature_names=None, display_feat
         cd = display_features[:, interaction_index]
         clow = np.nanpercentile(cv.astype(np.float), 5)
         chigh = np.nanpercentile(cv.astype(np.float), 95)
+        if clow == chigh:
+            clow = np.nanmin(cv.astype(np.float))
+            chigh = np.nanmax(cv.astype(np.float))
         if type(cd[0]) == str:
             cname_map = {}
             for i in range(len(cv)):
@@ -188,9 +200,9 @@ def dependence_plot(ind, shap_values, features, feature_names=None, display_feat
         if isinstance(xvals[0], float):
             xvals = xvals.astype(np.float)
             xvals = xvals[~np.isnan(xvals)]
-        xvals = np.unique(xvals)
+        xvals = np.unique(xvals) # returns a sorted array
         if len(xvals) >= 2:
-            smallest_diff = np.min(np.diff(np.sort(xvals)))
+            smallest_diff = np.min(np.diff(xvals))
             jitter_amount = x_jitter * smallest_diff
             xv += (np.random.ranf(size = len(xv))*jitter_amount) - (jitter_amount/2)
 
@@ -222,10 +234,10 @@ def dependence_plot(ind, shap_values, features, feature_names=None, display_feat
             if len(tick_positions) == 2:
                 tick_positions[0] -= 0.25
                 tick_positions[1] += 0.25
-            cb = pl.colorbar(p, ticks=tick_positions)
+            cb = pl.colorbar(p, ticks=tick_positions, ax=ax)
             cb.set_ticklabels(cnames)
         else:
-            cb = pl.colorbar(p)
+            cb = pl.colorbar(p, ax=ax)
 
         cb.set_label(feature_names[interaction_index], size=13)
         cb.ax.tick_params(labelsize=11)
@@ -248,7 +260,7 @@ def dependence_plot(ind, shap_values, features, feature_names=None, display_feat
             xmin = np.nanmin(xv) - (xmax - np.nanmin(xv))/20
         if xmax is None or xmax == np.nanmax(xv):
             xmax = np.nanmax(xv) + (np.nanmax(xv) - xmin)/20
-        
+
         ax.set_xlim(xmin, xmax)
 
     # plot any nan feature values as tick marks along the y-axis

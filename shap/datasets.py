@@ -34,6 +34,16 @@ def boston(display=False):
     df = pd.DataFrame(data=d.data, columns=d.feature_names) # pylint: disable=E1101
     return df, d.target # pylint: disable=E1101
 
+
+def linnerud(display=False):
+    """ Return the linnerud data in a nice package (multi-target regression). """
+
+    d = sklearn.datasets.load_linnerud()
+    X = pd.DataFrame(d.data, columns=d.feature_names) # pylint: disable=E1101
+    y = pd.DataFrame(d.target, columns=d.target_names) # pylint: disable=E1101
+    return X, y # pylint: disable=E1101
+
+
 def imdb(display=False):
     """ Return the clssic IMDB sentiment analysis training data in a nice package.
 
@@ -139,17 +149,6 @@ def nhanesi(display=False):
         return X_display, np.array(y)
     else:
         return X, np.array(y)
-
-def cric(display=False):
-    """ A nicely packaged version of CRIC data with progression to ESRD within 4 years as the label.
-    """
-    X = pd.read_csv(cache(github_data_url + "CRIC_time_4yearESRD_X.csv"))
-    y = np.loadtxt(cache(github_data_url + "CRIC_time_4yearESRD_y.csv"))
-    if display:
-        X_display = X.copy()
-        return X_display, y
-    else:
-        return X, y
 
 
 def corrgroups60(display=False):

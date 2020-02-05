@@ -17,8 +17,11 @@ from . import colors
 # TODO: remove unused title argument / use title argument
 def summary_plot(shap_values, features=None, feature_names=None, max_display=None, plot_type=None,
                  color=None, axis_color="#333333", title=None, alpha=1, show=True, sort=True,
-                 color_bar=True, auto_size_plot=True, layered_violin_max_num_bins=20, class_names=None,
-                 color_bar_label=labels["FEATURE_VALUE"]):
+                 color_bar=True, plot_size="auto", layered_violin_max_num_bins=20, class_names=None,
+                 class_inds=None,
+                 color_bar_label=labels["FEATURE_VALUE"],
+                 # depreciated
+                 auto_size_plot=None):
     """Create a SHAP summary plot, colored by feature values when they are provided.
 
     Parameters
@@ -40,7 +43,18 @@ def summary_plot(shap_values, features=None, feature_names=None, max_display=Non
         or "compact_dot".
         What type of summary plot to produce. Note that "compact_dot" is only used for
         SHAP interaction values.
+
+    plot_size : "auto" (default), float, (float, float), or None
+        What size to make the plot. By default the size is auto-scaled based on the number of
+        features that are being displayed. Passing a single float will cause each row to be that 
+        many inches high. Passing a pair of floats will scale the plot by that
+        number of inches. If None is passed then the size of the current figure will be left
+        unchanged.
     """
+
+    # deprication warnings
+    if auto_size_plot is not None:
+        warnings.warn("auto_size_plot=False is depricated and is now ignored! Use plot_size=None instead.")
 
     multi_class = False
     if isinstance(shap_values, list):
@@ -77,6 +91,15 @@ def summary_plot(shap_values, features=None, feature_names=None, max_display=Non
 
     num_features = (shap_values[0].shape[1] if multi_class else shap_values.shape[1])
 
+    if features is not None:
+        shape_msg = "The shape of the shap_values matrix does not match the shape of the " \
+                    "provided data matrix."
+        if num_features - 1 == features.shape[1]:
+            assert False, shape_msg + " Perhaps the extra column in the shap_values matrix is the " \
+                          "constant offset? Of so just pass shap_values[:,:-1]."
+        else:
+            assert num_features == features.shape[1], shape_msg
+
     if feature_names is None:
         feature_names = np.array([labels['FEATURE'] % str(i) for i in range(num_features)])
 
@@ -99,7 +122,7 @@ def summary_plot(shap_values, features=None, feature_names=None, max_display=Non
                 new_shap_values, new_features, new_feature_names,
                 max_display=max_display, plot_type="dot", color=color, axis_color=axis_color,
                 title=title, alpha=alpha, show=show, sort=sort,
-                color_bar=color_bar, auto_size_plot=auto_size_plot, class_names=class_names,
+                color_bar=color_bar, plot_size=plot_size, class_names=class_names,
                 color_bar_label="*" + color_bar_label
             )
 
@@ -126,7 +149,7 @@ def summary_plot(shap_values, features=None, feature_names=None, max_display=Non
             proj_shap_values, features[:, sort_inds] if features is not None else None,
             feature_names=feature_names[sort_inds],
             sort=False, show=False, color_bar=False,
-            auto_size_plot=False,
+            plot_size=None,
             max_display=max_display
         )
         pl.xlim((slow, shigh))
@@ -145,7 +168,7 @@ def summary_plot(shap_values, features=None, feature_names=None, max_display=Non
                 feature_names=["" for i in range(len(feature_names))],
                 show=False,
                 color_bar=False,
-                auto_size_plot=False,
+                plot_size=None,
                 max_display=max_display
             )
             pl.xlim((slow, shigh))
@@ -173,8 +196,12 @@ def summary_plot(shap_values, features=None, feature_names=None, max_display=Non
         feature_order = np.flip(np.arange(min(max_display, num_features)), 0)
 
     row_height = 0.4
-    if auto_size_plot:
+    if plot_size == "auto":
         pl.gcf().set_size_inches(8, len(feature_order) * row_height + 1.5)
+    elif type(plot_size) in (list, tuple):
+        pl.gcf().set_size_inches(plot_size[0], plot_size[1])
+    elif plot_size is not None:
+        pl.gcf().set_size_inches(8, len(feature_order) * plot_size + 1.5)
     pl.axvline(x=0, color="#999999", zorder=-1)
 
     if plot_type == "dot":
@@ -219,6 +246,8 @@ def summary_plot(shap_values, features=None, feature_names=None, max_display=Non
                     if vmin == vmax:
                         vmin = np.min(values)
                         vmax = np.max(values)
+                if vmin > vmax: # fixes rare numerical precision issues
+                    vmin = vmax
 
                 assert features.shape[0] == len(shaps), "Feature and SHAP matrices must have the same number of rows!"
 
@@ -292,8 +321,21 @@ def summary_plot(shap_values, features=None, feature_names=None, max_display=Non
                     if vmin == vmax:
                         vmin = np.min(values)
                         vmax = np.max(values)
-                pl.scatter(shaps, np.ones(shap_values.shape[0]) * pos, s=9, cmap=colors.red_blue, vmin=vmin, vmax=vmax,
-                           c=values, alpha=alpha, linewidth=0, zorder=1)
+
+                # plot the nan values in the interaction feature as grey
+                nan_mask = np.isnan(values)
+                pl.scatter(shaps[nan_mask], np.ones(shap_values[nan_mask].shape[0]) * pos,
+                           color="#777777", vmin=vmin, vmax=vmax, s=9,
+                           alpha=alpha, linewidth=0, zorder=1)
+                # plot the non-nan values colored by the trimmed feature value
+                cvals = values[np.invert(nan_mask)].astype(np.float64)
+                cvals_imp = cvals.copy()
+                cvals_imp[np.isnan(cvals)] = (vmin + vmax) / 2.0
+                cvals[cvals_imp > vmax] = vmax
+                cvals[cvals_imp < vmin] = vmin
+                pl.scatter(shaps[np.invert(nan_mask)], np.ones(shap_values[np.invert(nan_mask)].shape[0]) * pos,
+                           cmap=colors.red_blue, vmin=vmin, vmax=vmax, s=9,
+                           c=cvals, alpha=alpha, linewidth=0, zorder=1)
                 # smooth_values -= nxp.nanpercentile(smooth_values, 5)
                 # smooth_values /= np.nanpercentile(smooth_values, 95)
                 smooth_values -= vmin
@@ -302,7 +344,7 @@ def summary_plot(shap_values, features=None, feature_names=None, max_display=Non
                 for i in range(len(xs) - 1):
                     if ds[i] > 0.05 or ds[i + 1] > 0.05:
                         pl.fill_between([xs[i], xs[i + 1]], [pos + ds[i], pos + ds[i + 1]],
-                                        [pos - ds[i], pos - ds[i + 1]], color=colors.red_blue(smooth_values[i]),
+                                        [pos - ds[i], pos - ds[i + 1]], color=colors.red_blue_no_bounds(smooth_values[i]),
                                         zorder=2)
 
         else:
@@ -391,8 +433,11 @@ def summary_plot(shap_values, features=None, feature_names=None, max_display=Non
         y_pos = np.arange(len(feature_inds))
         left_pos = np.zeros(len(feature_inds))
 
-        class_inds = np.argsort([-np.abs(shap_values[i]).mean() for i in range(len(shap_values))])
-        for i,ind in enumerate(class_inds):
+        if class_inds is None:
+            class_inds = np.argsort([-np.abs(shap_values[i]).mean() for i in range(len(shap_values))])
+        elif class_inds == "original":
+            class_inds = range(len(shap_values))
+        for i, ind in enumerate(class_inds):
             global_shap_values = np.abs(shap_values[ind]).mean(0)
             pl.barh(
                 y_pos, global_shap_values[feature_inds], 0.7, left=left_pos, align='center',

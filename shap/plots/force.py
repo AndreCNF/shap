@@ -7,8 +7,12 @@ import io
 import string
 import json
 import random
-from IPython.core.display import display, HTML
-from IPython import get_ipython
+try:
+    from IPython.core.display import display, HTML
+    from IPython import get_ipython
+    have_ipython = True
+except ImportError:
+    have_ipython = False
 import base64
 import numpy as np
 import scipy.cluster
@@ -47,7 +51,7 @@ def force_plot(base_value, shap_values, features=None, feature_names=None, out_n
         List of feature names (# features).
 
     out_names : str
-        The name of the outout of the model (plural to support multi-output plotting in the future).
+        The name of the output of the model (plural to support multi-output plotting in the future).
     
     link : "identity" or "logit"
         The transformation used when drawing the tick mark labels. Using logit will change log-odds numbers
@@ -99,7 +103,7 @@ def force_plot(base_value, shap_values, features=None, feature_names=None, out_n
         shap_values = np.reshape(shap_values, (1, len(shap_values)))
 
     if out_names is None:
-        out_names = ["output value"]
+        out_names = ["model output value"]
     elif type(out_names) == str:
         out_names = [out_names]
 
@@ -141,19 +145,19 @@ def force_plot(base_value, shap_values, features=None, feature_names=None, out_n
             warnings.warn("shap.force_plot is slow for many thousands of rows, try subsampling your data.")
 
         exps = []
-        for i in range(shap_values.shape[0]):
+        for k in range(shap_values.shape[0]):
             if feature_names is None:
                 feature_names = [labels['FEATURE'] % str(i) for i in range(shap_values.shape[1])]
             if features is None:
                 display_features = ["" for i in range(len(feature_names))]
             else:
-                display_features = features[i, :]
+                display_features = features[k, :]
 
             instance = Instance(np.ones((1, len(feature_names))), display_features)
             e = AdditiveExplanation(
                 base_value,
-                np.sum(shap_values[i, :]) + base_value,
-                shap_values[i, :],
+                np.sum(shap_values[k, :]) + base_value,
+                shap_values[k, :],
                 None,
                 instance,
                 link,
@@ -202,6 +206,7 @@ err_msg = """
 
 
 def initjs():
+    assert have_ipython, "IPython must be installed to use initjs()! Run `pip install ipython` and then restart shap."
     bundle_path = os.path.join(os.path.split(__file__)[0], "resources", "bundle.js")
     with io.open(bundle_path, encoding="utf-8") as f:
         bundle_data = f.read()
@@ -211,7 +216,7 @@ def initjs():
     logo_data = base64.b64encode(logo_data).decode('utf-8')
     display(HTML(
         "<div align='center'><img src='data:image/png;base64,{logo_data}' /></div>".format(logo_data=logo_data) +
-        "<script>{bundle_data}</script>".format(bundle_data=bundle_data)
+        "<script charset='utf-8'>{bundle_data}</script>".format(bundle_data=bundle_data)
     ))
 
 def save_html(out_file, plot_html, full_html=True):
@@ -339,6 +344,7 @@ class SimpleListVisualizer:
         }
 
     def html(self):
+        assert have_ipython, "IPython must be installed to use this visualizer! Run `pip install ipython` and then restart shap."
         return HTML("""
 <div id='{id}'>{err_msg}</div>
  <script>
@@ -372,6 +378,7 @@ class AdditiveForceVisualizer:
         }
 
     def html(self, label_margin=20):
+        assert have_ipython, "IPython must be installed to use this visualizer! Run `pip install ipython` and then restart shap."
         self.data["labelMargin"] = label_margin
         return HTML("""
 <div id='{id}'>{err_msg}</div>
@@ -428,6 +435,7 @@ class AdditiveForceArrayVisualizer:
                 }
 
     def html(self):
+        assert have_ipython, "IPython must be installed to use this visualizer! Run `pip install ipython` and then restart shap."
         return HTML("""
 <div id='{id}'>{err_msg}</div>
  <script>

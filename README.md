@@ -1,20 +1,22 @@
 
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/slundberg/shap/master/docs/artwork/shap_diagram.png" width="400" />
+  <img src="https://raw.githubusercontent.com/slundberg/shap/master/docs/artwork/shap_header.png" width="800" />
 </p>
 
 ---
 <a href="https://travis-ci.org/slundberg/shap"><img src="https://travis-ci.org/slundberg/shap.svg?branch=master"></a>
 [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/slundberg/shap/master)
 
-**SHAP (SHapley Additive exPlanations)** is a unified approach to explain the output of any machine learning model. SHAP connects game theory with local explanations, uniting several previous methods [1-7] and representing the only possible consistent and locally accurate additive feature attribution method based on expectations (see our [papers](#citations) for details).
+**SHAP (SHapley Additive exPlanations)** is a game theoretic approach to explain the output of any machine learning model. It connects optimal credit allocation with local explanations using the classic Shapley values from game theory and their related extensions (see [papers](#citations) for details and citations).
+
+<!--**SHAP (SHapley Additive exPlanations)** is a unified approach to explain the output of any machine learning model. SHAP connects game theory with local explanations, uniting several previous methods [1-7] and representing the only possible consistent and locally accurate additive feature attribution method based on expectations (see our [papers](#citations) for details and citations).-->
 
 
 
 ## Install
 
-SHAP can be installed from either [PyPI](https://pypi.org/project/shap) or [conda-forge](https://anaconda.org/conda-forge/shap):
+Shap can be installed from either [PyPI](https://pypi.org/project/shap) or [conda-forge](https://anaconda.org/conda-forge/shap):
 
 <pre>
 pip install shap
@@ -22,9 +24,9 @@ pip install shap
 conda install -c conda-forge shap
 </pre>
 
-## Tree ensemble example with TreeExplainer (XGBoost/LightGBM/CatBoost/scikit-learn models)
+## Tree ensemble example with TreeExplainer (XGBoost/LightGBM/CatBoost/scikit-learn/pyspark models)
 
-While SHAP values can explain the output of any machine learning model, we have developed a high-speed exact algorithm for tree ensemble methods ([Tree SHAP arXiv paper](https://arxiv.org/abs/1802.03888)). Fast C++ implementations are supported for *XGBoost*, *LightGBM*, *CatBoost*, and *scikit-learn* tree models:
+While SHAP can explain the output of any machine learning model, we have developed a high-speed exact algorithm for tree ensemble methods (see our [Nature MI paper](https://rdcu.be/b0z70)). Fast C++ implementations are supported for *XGBoost*, *LightGBM*, *CatBoost*, *scikit-learn* and *pyspark* tree models:
 
 ```python
 import xgboost
@@ -37,8 +39,8 @@ shap.initjs()
 X,y = shap.datasets.boston()
 model = xgboost.train({"learning_rate": 0.01}, xgboost.DMatrix(X, label=y), 100)
 
-# explain the model's predictions using SHAP values
-# (same syntax works for LightGBM, CatBoost, and scikit-learn models)
+# explain the model's predictions using SHAP
+# (same syntax works for LightGBM, CatBoost, scikit-learn and spark models)
 explainer = shap.TreeExplainer(model)
 shap_values = explainer.shap_values(X)
 
@@ -60,8 +62,8 @@ import shap
 X,y = shap.datasets.boston()
 
 model = xgboost.train({"learning_rate": 0.01}, xgboost.DMatrix(X, label=y), 100)
-# explain the model's predictions using SHAP values
-# (same syntax works for LightGBM, CatBoost, and scikit-learn models)
+# explain the model's predictions using SHAP
+# (same syntax works for LightGBM, CatBoost, scikit-learn and spark models)
 explainer = shap.TreeExplainer(model)
 shap_values = explainer.shap_values(X)
 # visualize the first prediction's explanation using matplotlib (no javascript needed)
@@ -80,7 +82,7 @@ shap.force_plot(
   <img width="811" src="https://raw.githubusercontent.com/vatsan/shap/master/docs/artwork/force_plot_matplotlib_rotate.png" />
 </p>-->
 
-The above explanation shows features each contributing to push the model output from the base value (the average model output over the training dataset we passed) to the model output. Features pushing the prediction higher are shown in red, those pushing the prediction lower are in blue (these force plots are introduced in our [Nature BME paper](https://www.nature.com/articles/s41551-018-0304-0)).
+The above explanation shows features each contributing to push the model output from the base value (the average model output over the training dataset we passed) to the model output. Features pushing the prediction higher are shown in red, those pushing the prediction lower are in blue (these force plots are introduced in our [Nature BME paper](https://rdcu.be/baVbR)).
 
 If we take many explanations such as the one shown above, rotate them 90 degrees, and then stack them horizontally, we can see explanations for an entire dataset (in the notebook this plot is interactive):
 
@@ -96,7 +98,7 @@ shap.force_plot(explainer.expected_value, shap_values, X)
 To understand how a single feature effects the output of the model we can plot the SHAP value of that feature vs. the value of the feature for all the examples in a dataset. Since SHAP values represent a feature's responsibility for a change in the model output, the plot below represents the change in predicted house price as RM (the average number of rooms per house in an area) changes. Vertical dispersion at a single value of RM represents interaction effects with other features. To help reveal these interactions `dependence_plot` automatically selects another feature for coloring. In this case coloring by RAD (index of accessibility to radial highways) highlights that the average number of rooms per house has less impact on home price for areas with a high RAD value.
 
 ```python
-# create a SHAP dependence plot to show the effect of a single feature across the whole dataset
+# create a dependence plot to show the effect of a single feature across the whole dataset
 shap.dependence_plot("RM", shap_values, X)
 ```
 
@@ -261,7 +263,7 @@ An implementation of Tree SHAP, a fast and exact algorithm to compute SHAP value
 
 - [**NHANES survival model with XGBoost and SHAP interaction values**](https://slundberg.github.io/shap/notebooks/NHANES%20I%20Survival%20Model.html) - Using mortality data from 20 years of followup this notebook demonstrates how to use XGBoost and `shap` to uncover complex risk factor relationships.
 
-- [**Census income classification with LightGBM**](https://slundberg.github.io/shap/notebooks/Census%20income%20classification%20with%20LightGBM.html) - Using the standard adult census income dataset, this notebook trains a gradient boosting tree model with LightGBM and then explains predictions using `shap`.
+- [**Census income classification with LightGBM**](https://slundberg.github.io/shap/notebooks/tree_explainer/Census%20income%20classification%20with%20LightGBM.html) - Using the standard adult census income dataset, this notebook trains a gradient boosting tree model with LightGBM and then explains predictions using `shap`.
 
 - [**League of Legends Win Prediction with XGBoost**](https://slundberg.github.io/shap/notebooks/League%20of%20Legends%20Win%20Prediction%20with%20XGBoost.html) - Using a Kaggle dataset of 180,000 ranked matches from League of Legends we train and explain a gradient boosting tree model with XGBoost to predict if a player will win their match.
 
@@ -299,6 +301,8 @@ An implementation of Kernel SHAP, a model agnostic method to estimate SHAP value
 
 These notebooks comprehensively demonstrate how to use specific functions and objects. 
 
+- [`shap.decision_plot` and `shap.multioutput_decision_plot`](https://slundberg.github.io/shap/notebooks/plots/decision_plot.html)
+
 - [`shap.dependence_plot`](https://slundberg.github.io/shap/notebooks/plots/dependence_plot.html)
 
 ## Methods Unified by SHAP
@@ -319,10 +323,10 @@ These notebooks comprehensively demonstrate how to use specific functions and ob
 
 ## Citations
 
-The algorithms and visualizations used in this package came primarily out of research in [Su-In Lee's lab](https://suinlee.cs.washington.edu) at the University of Washington. If you use SHAP in your research we would appreciate a citation to the appropriate paper(s):
+The algorithms and visualizations used in this package came primarily out of research in [Su-In Lee's lab](https://suinlee.cs.washington.edu) at the University of Washington, and Microsoft Research. If you use SHAP in your research we would appreciate a citation to the appropriate paper(s):
 
 - For general use of SHAP you can read/cite our [NeurIPS paper](http://papers.nips.cc/paper/7062-a-unified-approach-to-interpreting-model-predictions) ([bibtex](https://raw.githubusercontent.com/slundberg/shap/master/docs/references/shap_nips.bib)). 
-- For TreeExplainer you can (for now) read/cite our [arXiv paper](https://arxiv.org/abs/1802.03888) ([bibtex](https://raw.githubusercontent.com/slundberg/shap/master/docs/references/treeshap_arxiv.bib)).
+- For TreeExplainer you can read/cite our [Nature Machine Intelligence paper](https://www.nature.com/articles/s42256-019-0138-9) ([bibtex](https://raw.githubusercontent.com/slundberg/shap/master/docs/references/tree_explainer.bib); [free access](https://rdcu.be/b0z70)).
 - For `force_plot` visualizations and medical applications you can read/cite our [Nature Biomedical Engineering paper](https://www.nature.com/articles/s41551-018-0304-0) ([bibtex](https://raw.githubusercontent.com/slundberg/shap/master/docs/references/nature_bme.bib); [free access](https://rdcu.be/baVbR)).
 
 <img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=189147091855991&ev=PageView&noscript=1" />

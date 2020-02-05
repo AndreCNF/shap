@@ -182,8 +182,8 @@ class KernelExplainer(Explainer):
         # warn users about large background data sets
         if len(self.data.weights) > 100:
             log.warning("Using " + str(len(self.data.weights)) + " background data samples could cause " +
-                        "slower run times. Consider using shap.kmeans(data, K) to summarize the background " +
-                        "as K weighted samples.")
+                        "slower run times. Consider using shap.sample(data, K) or shap.kmeans(data, K) to " +
+                        "summarize the background as K samples.")
 
         # init our parameters
         self.N = self.data.data.shape[0]
@@ -197,15 +197,17 @@ class KernelExplainer(Explainer):
             model_null = np.squeeze(model_null.values)
         self.fnull = np.sum((model_null.T * self.weights).T, 0)
         self.expected_value = self.linkfv(self.fnull)
-
+        
         # see if we have a vector output
         self.vector_out = True
         if len(self.fnull.shape) == 0:
             self.vector_out = False
             self.fnull = np.array([self.fnull])
             self.D = 1
+            self.expected_value = float(self.expected_value)
         else:
             self.D = self.fnull.shape[0]
+        
 
     def shap_values(self, X, **kwargs):
         """ Estimate the SHAP values for a set of samples.
@@ -593,7 +595,10 @@ class KernelExplainer(Explainer):
                 nonzero_rows = data_rows.nonzero()[0]
 
                 if nonzero_rows.size > 0:
-                    num_mismatches = np.sum(np.abs(data_rows[nonzero_rows].toarray() - x[0, varying_index]) > 1e-7)
+                    background_data_rows = data_rows[nonzero_rows]
+                    if sp.sparse.issparse(background_data_rows):
+                        background_data_rows = background_data_rows.toarray()
+                    num_mismatches = np.sum(np.abs(background_data_rows - x[0, varying_index]) > 1e-7)
                     # Note: If feature column non-zero but some background zero, can't remove index
                     if num_mismatches == 0 and not \
                         (np.abs(x[0, [varying_index]][0, 0]) > 1e-7 and len(nonzero_rows) < data_rows.shape[0]):
@@ -657,7 +662,12 @@ class KernelExplainer(Explainer):
                     self.synth_data[offset:offset+self.N, group] = x[0, group]
             else:
                 # further performance optimization in case each group has a single feature
-                self.synth_data[offset:offset+self.N, groups] = x[0, groups]
+                evaluation_data = x[0, groups]
+                # In edge case where background is all dense but evaluation data
+                # is all sparse, make evaluation data dense
+                if sp.sparse.issparse(x) and not sp.sparse.issparse(self.synth_data):
+                    evaluation_data = evaluation_data.toarray()
+                self.synth_data[offset:offset+self.N, groups] = evaluation_data
         self.maskMatrix[self.nsamplesAdded, :] = m
         self.kernelWeights[self.nsamplesAdded] = w
         self.nsamplesAdded += 1
