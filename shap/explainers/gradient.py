@@ -542,6 +542,7 @@ class _PyTorchGradientExplainer(Explainer):
         if rseed is None:
             rseed = np.random.randint(0, 1e6)
 
+        # [TODO] Do a loop for multivariate sequential data, iterating through sequence, timestamp and feature (similarly to the change done in the kernel explainer; this code only seems to be adapted for 2D data)
         for i in range(model_output_ranks.shape[1]):
             np.random.seed(rseed)  # so we get the same noise patterns for each output class
             phis = []

@@ -64,7 +64,7 @@ class KernelExplainer(Explainer):
     ----------
     model : function or iml.Model
         User supplied function that takes a matrix of samples (# samples x # features) and
-        computes a the output of the model for those samples. The output can be a vector
+        computes the output of the model for those samples. The output can be a vector
         (# samples) or a matrix (# samples x # model outputs).
 
     data : numpy.array or pandas.DataFrame or shap.common.DenseData or any scipy.sparse matrix
