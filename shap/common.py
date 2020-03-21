@@ -306,7 +306,7 @@ def convert_name(ind, shap_values, feature_names):
             elif ind == "sum()":
                 return "sum()"
             else:
-                print("Could not find feature named: " + ind)
+                raise ValueError("Could not find feature named: " + ind)
                 return None
         else:
             return nzinds[0]
@@ -420,8 +420,7 @@ def safe_isinstance(obj, class_path_str):
         if _class is None:
             continue
 
-        if isinstance(obj, _class):
-            return True
+        return isinstance(obj, _class)
 
     return False
 
@@ -441,3 +440,6 @@ def format_value(s, format_str):
 def partition_tree(X, metric="correlation"):
     D = sp.spatial.distance.pdist(X.fillna(X.mean()).T, metric=metric)
     return sp.cluster.hierarchy.complete(D)
+
+class SHAPError(Exception):
+    pass

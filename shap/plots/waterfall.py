@@ -28,11 +28,10 @@ def waterfall_plot(expected_value, shap_values, features=None, feature_names=Non
         be the value of explainer.expected_value.
 
     shap_values : numpy.array
-        Matrix of SHAP values (# features) or (# samples x # features). If this is a 1D array then a single
-        force plot will be drawn, if it is a 2D array then a stacked force plot will be drawn.
+        One dimensional array of SHAP values.
 
     features : numpy.array
-        Matrix of feature values (# features) or (# samples x # features). This provides the values of all the
+        One dimensional array of feature values. This provides the values of all the
         features, and should be the same shape as the shap_values argument.
 
     feature_names : list
@@ -47,10 +46,10 @@ def waterfall_plot(expected_value, shap_values, features=None, feature_names=Non
     """
 
     # make sure we only have a single output to explain
-    if (type(expected_value) == np.ndarray or type(expected_value) == list):
+    if (type(expected_value) == np.ndarray and len(expected_value) > 0) or type(expected_value) == list:
         raise Exception("waterfall_plot requires a scalar expected_value of the model output as the first " \
                         "parameter, but you have passed an array as the first parameter! " \
-                        "Try shap.waterfall_plot(explainer.expected_value, shap_values[0], X[0]) or " \
+                        "Try shap.waterfall_plot(explainer.expected_value[0], shap_values[0], X[0]) or " \
                         "for multi-output models try " \
                         "shap.waterfall_plot(explainer.expected_value[0], shap_values[0][0], X[0]).")
 
@@ -108,7 +107,7 @@ def waterfall_plot(expected_value, shap_values, features=None, feature_names=Non
         if features is None:
             yticklabels[rng[i]] = feature_names[order[i]]
         else:
-            yticklabels[rng[i]] = feature_names[order[i]] + " = " + format_value(features[order[i]], "%0.03f")
+            yticklabels[rng[i]] = format_value(features[order[i]], "%0.03f") + " = " + feature_names[order[i]] 
     
     # add a last grouped feature to represent the impact of all the features we didn't show
     if num_features < len(shap_values):
@@ -124,10 +123,15 @@ def waterfall_plot(expected_value, shap_values, features=None, feature_names=Non
             neg_widths.append(-remaining_impact)
             neg_lefts.append(loc + remaining_impact)
             c = colors.blue_rgb
+
+    points = pos_lefts + list(np.array(pos_lefts) + np.array(pos_widths)) + neg_lefts + list(np.array(neg_lefts) + np.array(neg_widths))
+    dataw = np.max(points) - np.min(points)
     
     # draw invisible bars just for sizing the axes
-    pl.barh(pos_inds, np.array(pos_widths)*1.001, left=pos_lefts, color=colors.red_rgb, alpha=0)
-    pl.barh(neg_inds, np.array(neg_widths)*1.001, left=neg_lefts, color=colors.blue_rgb, alpha=0)
+    label_padding = np.array([0.1*dataw if w < 1 else 0 for w in pos_widths])
+    pl.barh(pos_inds, np.array(pos_widths) + label_padding + 0.02*dataw, left=np.array(pos_lefts) - 0.01*dataw, color=colors.red_rgb, alpha=0)
+    label_padding = np.array([-0.1*dataw  if -w < 1 else 0 for w in neg_widths])
+    pl.barh(neg_inds, np.array(neg_widths) + label_padding - 0.02*dataw, left=np.array(neg_lefts) + 0.01*dataw, color=colors.blue_rgb, alpha=0)
     
     # define variable we need for plotting the arrows
     head_length = 0.08
@@ -159,8 +163,16 @@ def waterfall_plot(expected_value, shap_values, features=None, feature_names=Non
         )
         text_bbox = txt_obj.get_window_extent(renderer=renderer)
         arrow_bbox = arrow_obj.get_window_extent(renderer=renderer)
+        
+        # if the text overflows the arrow then draw it after the arrow
         if text_bbox.width > arrow_bbox.width: 
             txt_obj.remove()
+            
+            txt_obj = pl.text(
+                pos_lefts[i] + (5/72)*bbox_to_xscale + dist, pos_inds[i], format_value(pos_widths[i], '%+0.02f'),
+                horizontalalignment='left', verticalalignment='center', color=colors.red_rgb,
+                fontsize=12
+            )
     
     # draw the negative arrows
     for i in range(len(neg_inds)):
@@ -180,10 +192,19 @@ def waterfall_plot(expected_value, shap_values, features=None, feature_names=Non
         )
         text_bbox = txt_obj.get_window_extent(renderer=renderer)
         arrow_bbox = arrow_obj.get_window_extent(renderer=renderer)
+        
+        # if the text overflows the arrow then draw it after the arrow
         if text_bbox.width > arrow_bbox.width: 
             txt_obj.remove()
+            
+            txt_obj = pl.text(
+                neg_lefts[i] - (5/72)*bbox_to_xscale + dist, neg_inds[i], format_value(neg_widths[i], '%+0.02f'),
+                horizontalalignment='right', verticalalignment='center', color=colors.blue_rgb,
+                fontsize=12
+            )
 
-    pl.yticks(range(num_features), yticklabels, fontsize=13)
+    # draw the y-ticks twice, once in gray and then again with just the feature names in black
+    pl.yticks(list(range(num_features))*2, yticklabels[:-1] + [l.split('=')[-1] for l in yticklabels[:-1]], fontsize=13)
     
     # put horizontal lines for each feature row
     for i in range(num_features):
@@ -200,42 +221,23 @@ def waterfall_plot(expected_value, shap_values, features=None, feature_names=Non
     pl.gca().spines['right'].set_visible(False)
     pl.gca().spines['top'].set_visible(False)
     pl.gca().spines['left'].set_visible(False)
-    pl.xlabel("Model output", fontsize=12)
-    
-    # remove the x tick mark that is closest to E[f(X)]
-    xmin,xmax = ax.get_xlim()
-    xticks = ax.get_xticks()
-    xticks = list(xticks)
-    min_ind = 0
-    min_diff = 1e10
-    for i in range(len(xticks)):
-        v = abs(xticks[i] - expected_value)
-        if v < min_diff:
-            min_diff = v
-            min_ind = i
-    xticks.pop(min_ind)
-    ax.set_xticks(xticks)
     ax.tick_params(labelsize=13)
-    ax.set_xlim(xmin,xmax)
+    #pl.xlabel("\nModel output", fontsize=12)
 
     # draw the E[f(X)] tick mark
+    xmin,xmax = ax.get_xlim()
     ax2=ax.twiny()
     ax2.set_xlim(xmin,xmax)
-    # if min_diff < abs(fx - expected_value):
-    #     ax2.set_xticks([fx, expected_value])
-    #     ax2.set_xticklabels([format_value(fx, "%0.03f"), "$E[f(X)]$"], fontsize=12)
-    # else:
-    ax2.set_xticks([expected_value])
-    ax2.set_xticklabels(["$E[f(X)]$"], fontsize=12)
+    ax2.set_xticks([expected_value, expected_value])
+    ax2.set_xticklabels(["\n$E[f(X)]$","\n$ = "+format_value(expected_value, "%0.03f")+"$"], fontsize=12, ha="left")
     ax2.spines['right'].set_visible(False)
     ax2.spines['top'].set_visible(False)
     ax2.spines['left'].set_visible(False)
 
+    # draw the f(x) tick mark
     ax3=ax2.twiny()
     ax3.set_xlim(xmin,xmax)
     ax3.set_xticks([expected_value + shap_values.sum()] * 2)
-
-    # draw the f(x) tick mark
     ax3.set_xticklabels(["$f(x)$","$ = "+format_value(fx, "%0.03f")+"$"], fontsize=12, ha="left")
     tick_labels = ax3.xaxis.get_majorticklabels()
     tick_labels[0].set_transform(tick_labels[0].get_transform() + matplotlib.transforms.ScaledTranslation(-10/72., 0, fig.dpi_scale_trans))
@@ -244,6 +246,18 @@ def waterfall_plot(expected_value, shap_values, features=None, feature_names=Non
     ax3.spines['right'].set_visible(False)
     ax3.spines['top'].set_visible(False)
     ax3.spines['left'].set_visible(False)
+
+    # adjust the position of the E[f(X)] = x.xx label
+    tick_labels = ax2.xaxis.get_majorticklabels()
+    tick_labels[0].set_transform(tick_labels[0].get_transform() + matplotlib.transforms.ScaledTranslation(-20/72., 0, fig.dpi_scale_trans))
+    tick_labels[1].set_transform(tick_labels[1].get_transform() + matplotlib.transforms.ScaledTranslation(22/72., -1/72., fig.dpi_scale_trans))
+    tick_labels[1].set_color("#999999")
+
+    # color the y tick labels that have the feature values as gray
+    # (these fall behind the black ones with just the feature name)
+    tick_labels = ax.yaxis.get_majorticklabels()
+    for i in range(num_features):
+        tick_labels[i].set_color("#999999")
     
     if show:
         pl.show()
