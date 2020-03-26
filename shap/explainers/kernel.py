@@ -106,6 +106,9 @@ class KernelExplainer(Explainer):
         Pointer to the recurrent layer in the model, if it exists. It should
         either be a LSTM, GRU or RNN network. If none is specified, the
         method will automatically search for a recurrent layer in the model.
+
+    padding_value : numeric
+        Value to use in the padding, to fill the sequences.
     """
 
     def __init__(self, model, data, link=IdentityLink(), **kwargs):
@@ -124,6 +127,8 @@ class KernelExplainer(Explainer):
             self.ts_col_num = kwargs.get('ts_col_num', 1)
             # number of the column that corresponds to the label
             label_col_num = kwargs.get('label_col_num', None)
+            # padding value
+            self.padding_value = kwargs.get('padding_value', 999999)
             # all columns in the data
             self.model_features = list(range(data.shape[1]))
             # remove unwanted columns, so that we get only those that actually correspond to model usable features
@@ -197,7 +202,7 @@ class KernelExplainer(Explainer):
             model_null = np.squeeze(model_null.values)
         self.fnull = np.sum((model_null.T * self.weights).T, 0)
         self.expected_value = self.linkfv(self.fnull)
-        
+
         # see if we have a vector output
         self.vector_out = True
         if len(self.fnull.shape) == 0:
@@ -207,7 +212,7 @@ class KernelExplainer(Explainer):
             self.expected_value = float(self.expected_value)
         else:
             self.D = self.fnull.shape[0]
-        
+
 
     def shap_values(self, X, **kwargs):
         """ Estimate the SHAP values for a set of samples.
@@ -263,8 +268,12 @@ class KernelExplainer(Explainer):
             self.subject_ids, indeces = np.unique(X[:, self.id_col_num], return_index=True)
             sorted_idx = np.argsort(indeces)
             self.subject_ids = self.subject_ids[sorted_idx].astype(int)
+            # Remove paddings
+            self.subject_ids = self.subject_ids[self.subject_ids != self.padding_value]
+            ts_values = X[:, self.ts_col_num]
+            ts_values = ts_values[ts_values != self.padding_value]
             # maximum sequence length in the test data
-            max_seq_len = int(np.max(X[:, self.ts_col_num]) + 1)
+            max_seq_len = int(np.max(ts_values) + 1)
             # compare with the maximum sequence length in the background data
             if max_seq_len > self.max_seq_len:
                 # update maximum sequence length
@@ -291,8 +300,12 @@ class KernelExplainer(Explainer):
                         # get the hidden state outputed from the previous recurrent cell
                         _, hidden_state = self.recur_layer(past_data[:, :, self.model_features].float())
                         # avoid passing gradients from previous instances
-                        if type(hidden_state) is tuple:
-                            hidden_state = (hidden_state[0].detach(), hidden_state[1].detach())
+                        if isinstance(hidden_state, tuple) or isinstance(hidden_state, list):
+                            if isinstance(hidden_state[0], tuple) or isinstance(hidden_state[0], list):
+                                hidden_state = [(hidden_state[i][0].detach(), hidden_state[i][1].detach())
+                                                for i in range(len(hidden_state))]
+                            else:
+                                hidden_state = (hidden_state[0].detach(), hidden_state[1].detach())
                         else:
                             hidden_state.detach_()
                     # add the hidden_state to the kwargs
