@@ -273,7 +273,12 @@ class KernelExplainer(Explainer):
             ts_values = X[:, self.ts_col_num]
             ts_values = ts_values[ts_values != self.padding_value]
             # maximum sequence length in the test data
-            max_seq_len = int(np.max(ts_values) + 1)
+            max_seq_len = 1
+            for id in self.subject_ids:
+                seq_data = X[np.where((X[:, self.id_col_num] == id))]
+                cur_seq_length = len(seq_data)
+                if cur_seq_length > max_seq_len:
+                    max_seq_len = cur_seq_length
             # compare with the maximum sequence length in the background data
             if max_seq_len > self.max_seq_len:
                 # update maximum sequence length
@@ -283,20 +288,23 @@ class KernelExplainer(Explainer):
             seq_count = 0
             # loop through the unique subject ID's
             for id in tqdm(self.subject_ids, disable=kwargs.get("silent", False)):
+                # get the data corresponding to the current sequence
+                seq_data = X[X[:, self.id_col_num] == id]
+                # get the unique timestamp (or instance index) values of the current sequence
+                seq_unique_ts = np.unique(seq_data[:, self.ts_col_num]).astype(int)
+                # count the order of the instances being iterated
+                ts_count = 0
                 # loop through the possible instances
-                for ts in tqdm(range(self.max_seq_len), disable=kwargs.get("silent", False)):
+                for ts in tqdm(seq_unique_ts, disable=kwargs.get("silent", False)):
                     # get the data corresponding to the current instance
-                    data = X[(X[:, self.id_col_num] == id) * (X[:, self.ts_col_num] == ts)]
+                    inst_data = seq_data[seq_data[:, self.ts_col_num] == ts]
                     # remove unwanted features (id, ts and label)
-                    data = data[:, self.model_features]
-                    if data.shape[0] is 0:
-                        # non existent instance (reached the end of the current sequence), move on to the next sequence
-                        break
+                    inst_data = inst_data[:, self.model_features]
                     hidden_state = None
                     # get the hidden state that the model receives as an input
                     if ts > 0:
                         # data from the previous instance(s) in the same sequence
-                        past_data = torch.from_numpy(X[np.where((X[:, self.id_col_num] == id) * (X[:, self.ts_col_num] < ts))]).unsqueeze(0)
+                        past_data = torch.from_numpy(seq_data[np.where(seq_data[:, self.ts_col_num] < ts)]).unsqueeze(0)
                         # get the hidden state outputed from the previous recurrent cell
                         _, hidden_state = self.recur_layer(past_data[:, :, self.model_features].float())
                         # avoid passing gradients from previous instances
@@ -311,8 +319,9 @@ class KernelExplainer(Explainer):
                     # add the hidden_state to the kwargs
                     kwargs['hidden_state'] = hidden_state
                     if self.keep_index:
-                        data = convert_to_instance_with_index(data, column_name, seq_count * self.max_seq_len + ts, index_name)
-                    explanations[seq_count, ts, :] = self.explain(data, **kwargs).squeeze()
+                        inst_data = convert_to_instance_with_index(inst_data, column_name, seq_count * self.max_seq_len + ts, index_name)
+                    explanations[seq_count, ts_count, :] = self.explain(inst_data, **kwargs).squeeze()
+                    ts_count += 1
                 seq_count += 1
 
             return explanations
