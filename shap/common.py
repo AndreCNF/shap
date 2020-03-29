@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import scipy as sp
 from scipy.spatial.distance import pdist
-from tqdm.autonotebook import tqdm
+from tqdm.auto import tqdm
 import torch
 import sys
 import warnings
@@ -98,9 +98,9 @@ def match_model_to_data(model, data, isRNN=False, model_features=None,
             # count the instances to get the original index
             idx_count = 0
             # loop through the unique subject ID's
-            for id in tqdm(subject_ids, disable=silent):
+            for id in tqdm(subject_ids, disable=silent, desc='ID loop'):
                 # loop through the possible instances
-                for ts in tqdm(range(max_seq_len), disable=silent):
+                for ts in tqdm(range(max_seq_len), disable=silent, desc='ts loop', leave=False):
                     # get the data corresponding to the current instance / timestamp
                     inst_data = X[np.where((X[:, id_col_num] == id) * (X[:, ts_col_num] == ts))]
                     # remove unwanted features (id, ts and label)
