@@ -273,12 +273,14 @@ class KernelExplainer(Explainer):
             ts_values = X[:, self.ts_col_num]
             ts_values = ts_values[ts_values != self.padding_value]
             # maximum sequence length in the test data
-            max_seq_len = 1
-            for id in self.subject_ids:
-                seq_data = X[np.where((X[:, self.id_col_num] == id))]
-                cur_seq_length = len(seq_data)
-                if cur_seq_length > max_seq_len:
-                    max_seq_len = cur_seq_length
+            max_seq_len = kwargs.get('max_seq_len', None)
+            if max_seq_len == None:
+                max_seq_len = 1
+                for id in self.subject_ids:
+                    seq_data = X[np.where((X[:, self.id_col_num] == id))]
+                    cur_seq_length = len(seq_data)
+                    if cur_seq_length > max_seq_len:
+                        max_seq_len = cur_seq_length
             # compare with the maximum sequence length in the background data
             if max_seq_len > self.max_seq_len:
                 # update maximum sequence length
