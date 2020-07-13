@@ -671,7 +671,7 @@ class TreeEnsemble:
             self.trees = list(itertools.chain.from_iterable(output_trees))
             self.objective = objective_name_map.get(model.loss, None)
             self.tree_output = "log_odds"
-        elif safe_isinstance(model, ["sklearn.ensemble.GradientBoostingClassifier", "sklearn.ensemble.gradient_boosting.GradientBoostingClassifier"]):
+        elif safe_isinstance(model, ["sklearn.ensemble.GradientBoostingClassifier","sklearn.ensemble._gb.GradientBoostingClassifier", "sklearn.ensemble.gradient_boosting.GradientBoostingClassifier"]):
             self.input_dtype = np.float32
 
             # TODO: deal with estimators for each class
@@ -1312,7 +1312,8 @@ class XGBTreeModelLoader(object):
     tree can actually be wrong when feature values land almost on a threshold.
     """
     def __init__(self, xgb_model):
-        self.buf = xgb_model.save_raw()
+        # new in XGBoost 1.1, 'binf' is appended to the buffer
+        self.buf = xgb_model.save_raw().lstrip(b'binf')
         self.pos = 0
 
         # load the model parameters
