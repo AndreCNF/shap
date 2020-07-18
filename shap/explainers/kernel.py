@@ -170,13 +170,20 @@ class KernelExplainer(Explainer):
                 else:
                     raise Exception('ERROR: No recurrent layer found. Please specify it in the recur_layer argument.')
             # get the unique subject ID's in the background data
-            subject_ids = np.unique(data[:, self.id_col_num]).astype(int)
+            self.subject_ids = np.unique(data[:, self.id_col_num]).astype(int)
             # maximum sequence length in the background data
-            self.max_seq_len = int(np.max(data[:, self.ts_col_num]) + 1)
+            self.max_seq_len = kwargs.get('max_seq_len', None)
+            if self.max_seq_len == None:
+                self.max_seq_len = 1
+                for id in self.subject_ids:
+                    seq_data = data[np.where((data[:, self.id_col_num] == id))]
+                    cur_seq_length = len(seq_data)
+                    if cur_seq_length > self.max_seq_len:
+                        self.max_seq_len = cur_seq_length
             # calculate the output for all the background data
             model_null = match_model_to_data(self.model, data, self.isRNN, self.model_features,
                                              self.id_col_num, self.ts_col_num, self.recur_layer,
-                                             subject_ids, self.max_seq_len, self.model.f,
+                                             self.subject_ids, self.max_seq_len, self.model.f,
                                              silent=kwargs.get("silent", False))
         else:
             self.data = convert_to_data(data, keep_index=self.keep_index)
@@ -298,7 +305,7 @@ class KernelExplainer(Explainer):
             # count the order of the sequences being iterated
             seq_count = 0
             # loop through the unique subject ID's
-            for id in tqdm(self.subject_ids, disable=kwargs.get("silent", False)):
+            for id in tqdm(self.subject_ids, disable=kwargs.get("silent", False), desc='ID loop'):
                 # get the data corresponding to the current sequence
                 seq_data = X[X[:, self.id_col_num] == id]
                 # get the unique timestamp (or instance index) values of the current sequence
@@ -306,7 +313,7 @@ class KernelExplainer(Explainer):
                 # count the order of the instances being iterated
                 ts_count = 0
                 # loop through the possible instances
-                for ts in tqdm(seq_unique_ts, disable=kwargs.get("silent", False)):
+                for ts in tqdm(seq_unique_ts, disable=kwargs.get("silent", False), desc='ts loop', leave=False):
                     # get the data corresponding to the current instance
                     inst_data = seq_data[seq_data[:, self.ts_col_num] == ts]
                     # remove unwanted features (id, ts and label)
