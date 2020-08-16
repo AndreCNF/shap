@@ -591,7 +591,7 @@ class KernelExplainer(Explainer):
                 self.kernelWeights[nfixed_samples:] *= weight_left / self.kernelWeights[nfixed_samples:].sum()
 
             # execute the model on the synthetic samples we have created
-            self.run()
+            self.run(**kwargs)
 
             # solve then expand the feature importance (Shapley value) vector to contain the non-varying features
             phi = np.zeros((self.data.groups_size, self.D))
@@ -712,7 +712,7 @@ class KernelExplainer(Explainer):
         self.kernelWeights[self.nsamplesAdded] = w
         self.nsamplesAdded += 1
 
-    def run(self):
+    def run(self, **kwargs):
         # [TODO] The inefficiency issue is probably derived from here. It seems to want to run the requested number of samples TIMES the TOTAL number of background samples!
         num_to_run = self.nsamplesAdded * self.N - self.nsamplesRun * self.N
         data = self.synth_data[self.nsamplesRun*self.N:self.nsamplesAdded*self.N,:]
@@ -723,7 +723,23 @@ class KernelExplainer(Explainer):
             data = pd.concat([index, data], axis=1).set_index(self.data.index_name)
             if self.keep_index_ordered:
                 data = data.sort_index()
-        modelOut = self.model.f(data)
+        if self.isRNN is True:
+            # get the current hidden state, if given
+            hidden_state = kwargs.get('hidden_state', None)
+            if hidden_state is not None:
+                # repeat the hidden state along the batch dimension
+                if isinstance(hidden_state, torch.Tensor):
+                    hidden_state = hidden_state.repeat(1, data.shape[0], 1)
+                else:
+                    hidden_state_0 = hidden_state[0].repeat(1, data.shape[0], 1)
+                    hidden_state_1 = hidden_state[1].repeat(1, data.shape[0], 1)
+                    hidden_state = (hidden_state_0, hidden_state_1)
+            # convert the data to be three-dimensional, considering each
+            data = torch.from_numpy(data).float().unsqueeze(1)
+            # synthetic sample as a separate sequence
+            modelOut = self.model.f(data, hidden_state)
+        else:
+            modelOut = self.model.f(data)
         if isinstance(modelOut, (pd.DataFrame, pd.Series)):
             modelOut = modelOut.values
         self.y[self.nsamplesRun * self.N:self.nsamplesAdded * self.N, :] = np.reshape(modelOut, (num_to_run, self.D))
