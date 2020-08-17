@@ -116,6 +116,11 @@ class KernelExplainer(Explainer):
         either be a LSTM, GRU or RNN network. If none is specified, the
         method will automatically search for a recurrent layer in the model.
 
+    isBidir: bool
+        Boolean that indicates if the recurrent neural network model being analyzed is 
+        bidirectional. If so, it implies a special treatment of the sequences, as the
+        hidden states can't be moved in the same way of a single direction RNN.
+
     padding_value : numeric
         Value to use in the padding, to fill the sequences.
     """
@@ -130,6 +135,8 @@ class KernelExplainer(Explainer):
         # check if the model is a recurrent neural network
         self.isRNN = kwargs.get('isRNN', False)
         if self.isRNN and not str(type(data)).endswith("'pandas.core.frame.DataFrame'>"):
+            # check if the model is a bidirectional recurrent neural network
+            self.isBidir = kwargs.get('isBidir', False)
             # number of the column that corresponds to the sequence / subject id
             self.id_col_num = kwargs.get('id_col_num', 0)
             # number of the column that corresponds to the instance / timestamp
@@ -312,30 +319,43 @@ class KernelExplainer(Explainer):
                 seq_unique_ts = np.unique(seq_data[:, self.ts_col_num]).astype(int)
                 # count the order of the instances being iterated
                 ts_count = 0
+                if self.isBidir is True:
+                    # calculate the full sequence's outputs
+                    torch_seq_data = torch.from_numpy(seq_data[:, self.model_features]).unsqueeze(0).float()
+                    seq_outputs, _ = self.recur_layer(torch_seq_data)
                 # loop through the possible instances
                 for ts in tqdm(seq_unique_ts, disable=kwargs.get("silent", False), desc='ts loop', leave=False):
                     # get the data corresponding to the current instance
                     inst_data = seq_data[seq_data[:, self.ts_col_num] == ts]
                     # remove unwanted features (id, ts and label)
                     inst_data = inst_data[:, self.model_features]
-                    hidden_state = None
                     # get the hidden state that the model receives as an input
                     if ts > 0:
                         # data from the previous instance(s) in the same sequence
-                        past_data = torch.from_numpy(seq_data[np.where(seq_data[:, self.ts_col_num] < ts)]).unsqueeze(0)
-                        # get the hidden state outputed from the previous recurrent cell
-                        _, hidden_state = self.recur_layer(past_data[:, :, self.model_features].float())
-                        # avoid passing gradients from previous instances
-                        if isinstance(hidden_state, tuple) or isinstance(hidden_state, list):
-                            if isinstance(hidden_state[0], tuple) or isinstance(hidden_state[0], list):
-                                hidden_state = [(hidden_state[i][0].detach(), hidden_state[i][1].detach())
-                                                for i in range(len(hidden_state))]
+                        past_data = torch.from_numpy(seq_data[np.where(seq_data[:, self.ts_col_num] < ts)])
+                        if self.isBidir is False:
+                            hidden_state = None
+                            # convert the past data to a 3D tensor
+                            past_data = past_data.unsqueeze(0)
+                            # get the hidden state outputed from the previous recurrent cell
+                            _, hidden_state = self.recur_layer(past_data[:, :, self.model_features].float())
+                            # avoid passing gradients from previous instances
+                            if isinstance(hidden_state, tuple) or isinstance(hidden_state, list):
+                                if isinstance(hidden_state[0], tuple) or isinstance(hidden_state[0], list):
+                                    hidden_state = [(hidden_state[i][0].detach(), hidden_state[i][1].detach())
+                                                    for i in range(len(hidden_state))]
+                                else:
+                                    hidden_state = (hidden_state[0].detach(), hidden_state[1].detach())
                             else:
-                                hidden_state = (hidden_state[0].detach(), hidden_state[1].detach())
+                                hidden_state.detach_()
+                            # add the hidden_state to the kwargs
+                            kwargs['hidden_state'] = hidden_state
                         else:
-                            hidden_state.detach_()
-                    # add the hidden_state to the kwargs
-                    kwargs['hidden_state'] = hidden_state
+                            # add the past_data to the kwargs
+                            kwargs['past_data'] = past_data
+                    if self.isBidir is True:
+                        # add the current instance's output to the kwargs
+                        kwargs['inst_output'] = seq_outputs[ts_count].unsqueeze(0).detach().numpy()
                     if self.keep_index:
                         inst_data = convert_to_instance_with_index(inst_data, column_name, seq_count * self.max_seq_len + ts, index_name)
                     explanations[seq_count, ts_count, :] = self.explain(inst_data, **kwargs).squeeze()
@@ -433,17 +453,27 @@ class KernelExplainer(Explainer):
 
         # get the current hidden state, if given
         hidden_state = kwargs.get('hidden_state', None)
+        # get the current past data, if given
+        past_data = kwargs.get('past_data', None)
+        # get the current instances' output, if given
+        inst_output = kwargs.get('inst_output', None)
         # find f(x)
         if self.keep_index:
-            if self.isRNN:
-                # only provide the hidden state argument if the model is a RNN type model
-                model_out = self.model.f(instance.convert_to_df(), hidden_state)
+            if self.isRNN is True:
+                if self.isBidir is False:
+                    # only provide the hidden state argument if the model is a RNN type model
+                    model_out = self.model.f(instance.convert_to_df(), hidden_state)
+                else:
+                    model_out = inst_output
             else:
                 model_out = self.model.f(instance.convert_to_df())
         else:
-            if self.isRNN:
-                # only provide the hidden state argument if the model is a RNN type model
-                model_out = self.model.f(instance.x, hidden_state)
+            if self.isRNN is True:
+                if self.isBidir is False:
+                    # only provide the hidden state argument if the model is a RNN type model
+                    model_out = self.model.f(instance.x, hidden_state)
+                else:
+                    model_out = inst_output
             else:
                 model_out = self.model.f(instance.x)
         if isinstance(model_out, (pd.DataFrame, pd.Series)):
@@ -724,20 +754,38 @@ class KernelExplainer(Explainer):
             if self.keep_index_ordered:
                 data = data.sort_index()
         if self.isRNN is True:
-            # get the current hidden state, if given
-            hidden_state = kwargs.get('hidden_state', None)
-            if hidden_state is not None:
-                # repeat the hidden state along the batch dimension
-                if isinstance(hidden_state, torch.Tensor):
-                    hidden_state = hidden_state.repeat(1, data.shape[0], 1)
-                else:
-                    hidden_state_0 = hidden_state[0].repeat(1, data.shape[0], 1)
-                    hidden_state_1 = hidden_state[1].repeat(1, data.shape[0], 1)
-                    hidden_state = (hidden_state_0, hidden_state_1)
             # convert the data to be three-dimensional, considering each
-            data = torch.from_numpy(data).float().unsqueeze(1)
             # synthetic sample as a separate sequence
-            modelOut = self.model.f(data, hidden_state)
+            data = torch.from_numpy(data).float().unsqueeze(1)
+            if self.isBidir is False:
+                # get the current hidden state, if given
+                hidden_state = kwargs.get('hidden_state', None)
+                if hidden_state is not None:
+                    # repeat the hidden state along the batch dimension
+                    if isinstance(hidden_state, torch.Tensor):
+                        hidden_state = hidden_state.repeat(1, data.shape[0], 1)
+                    else:
+                        hidden_state_0 = hidden_state[0].repeat(1, data.shape[0], 1)
+                        hidden_state_1 = hidden_state[1].repeat(1, data.shape[0], 1)
+                        hidden_state = (hidden_state_0, hidden_state_1)
+                modelOut = self.model.f(data, hidden_state)
+            else:
+                # get the current past data, if given
+                past_data = kwargs.get('past_data', None)
+                if past_data is not None:
+                    # convert the data to be three-dimensional float tensor and remove ID columns
+                    past_data = past_data[:, 2:].unsqueeze(0).float()
+                    # repeat the past data along the batch dimension
+                    past_data = past_data.repeat(data.shape[0], 1, 1)
+                    # add the previous instances from the same sequence, if there are any
+                    seq_data = torch.cat((past_data, data), dim=1)
+                else:
+                    seq_data = data
+                modelOut = self.model.f(seq_data)
+                if past_data is not None:
+                    # only get the outputs from the last sample, ignoring the previous instances
+                    modelOut = modelOut.reshape([-1, past_data.shape[1]+1, 1])
+                    modelOut = modelOut[:, -1, :]
         else:
             modelOut = self.model.f(data)
         if isinstance(modelOut, (pd.DataFrame, pd.Series)):
